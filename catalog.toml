@@ -20,6 +20,6 @@ tags = ["notifications", "macos", "automation"]
 kind = "plugin"
 name = "Settings UI"
 description = "Opens a graphical settings editor for OpenMUX config.toml."
-version = "0.1.0"
+version = "0.1.4"
 path = "plugins/settings-ui/omux-plugin.toml"
 tags = ["settings", "configuration", "extension-pane"]

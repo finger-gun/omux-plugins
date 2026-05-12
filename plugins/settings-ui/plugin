@@ -10,112 +10,142 @@ if ! command_exists python3; then
   exit 1
 fi
 
+ACTION_FILE=""
 if [[ "${1:-}" == "__omux_action" ]]; then
-  python3 - <<'PY'
+  ACTION_FILE="$(mktemp "${TMPDIR:-/tmp}/omux-settings-ui-action.XXXXXX")"
+  cat > "$ACTION_FILE"
+  export ACTION_FILE
+fi
+
+python3 - <<'PY'
 import html
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 
-request = json.load(sys.stdin)
-pane_id = request.get("paneID", "")
-plugin_id = request.get("pluginID", "settings-ui")
-action = request.get("action", "")
 
-if action != "save":
-    print(json.dumps({"success": False, "message": f"unsupported action: {action}"}))
-    sys.exit(0)
+def resolve_omux():
+    candidates = [
+        os.environ.get("OMUX_CLI"),
+        os.environ.get("OMUX_HOST_CLI"),
+        shutil.which("omux"),
+        os.path.expanduser("~/.local/bin/omux"),
+        os.path.expanduser("~/bin/omux"),
+        "/Applications/OpenMUX.app/Contents/MacOS/omux",
+        "/opt/homebrew/bin/omux",
+        "/usr/local/bin/omux",
+    ]
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
 
-payload = request.get("payload", {})
-with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as payload_file:
-    json.dump(payload, payload_file)
-    payload_path = payload_file.name
-
-try:
-    apply_result = subprocess.run(
-        ["omux", "config", "apply", "--json-file", payload_path],
-        text=True,
-        capture_output=True,
-    )
-finally:
-    try:
-        os.unlink(payload_path)
-    except OSError:
-        pass
-
-ok = apply_result.returncode == 0
-status = "Saved and reloaded." if ok else "Save failed."
-details = apply_result.stdout if ok else (apply_result.stderr or apply_result.stdout)
-body = f"""
-<!doctype html>
-<meta charset="utf-8">
-<style>
-body {{ margin: 0; padding: 24px; font: 14px -apple-system, BlinkMacSystemFont, sans-serif; color: #f5f5f5; background: #101014; }}
-pre {{ white-space: pre-wrap; padding: 12px; background: #1d1d24; border-radius: 8px; }}
-button {{ padding: 8px 12px; border: 0; border-radius: 6px; }}
-</style>
-<h1>{html.escape(status)}</h1>
-<pre>{html.escape(details.strip())}</pre>
-"""
-with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False) as html_file:
-    html_file.write(body)
-    html_path = html_file.name
-
-try:
-    subprocess.run(
-        ["omux", "extension-pane", "update", "--pane", pane_id, "--plugin", plugin_id, "--title", "Settings", "--html-file", html_path, "--actions"],
-        check=False,
-    )
-finally:
-    try:
-        os.unlink(html_path)
-    except OSError:
-        pass
-
-print(json.dumps({"success": ok, "message": status}))
-PY
-  exit $?
-fi
-
-CONFIG_JSON="$(omux config get --json || true)"
-export CONFIG_JSON
-
-HTML_FILE="$(mktemp "${TMPDIR:-/tmp}/omux-settings-ui.XXXXXX.html")"
-python3 - "$HTML_FILE" <<'PY'
-import html
-import json
-import os
-import sys
-
-target = sys.argv[1]
-raw = os.environ.get("CONFIG_JSON", "{}")
-try:
-    config = json.loads(raw)
-except json.JSONDecodeError:
-    config = {"values": {}, "diagnostics": [{"severity": "error", "message": raw}]}
-
-values = config.get("values", {})
-terminal = values.get("terminal", {})
-persisted = terminal.get("persistedScrollback", {})
-workspace = values.get("workspace", {})
-ui = values.get("ui", {})
-panes = ui.get("panes", {})
-icons = ui.get("icons", {})
-plugins = values.get("plugins", {})
-markdown = plugins.get("markdownPreview", {})
 
 def checked(value):
     return "checked" if value else ""
 
+
 def esc(value):
     return html.escape("" if value is None else str(value), quote=True)
 
-diagnostics = config.get("diagnostics", [])
-diagnostic_html = "".join(f"<li>{esc(d.get('severity', 'error'))}: {esc(d.get('message', ''))}</li>" for d in diagnostics)
 
-document = f"""<!doctype html>
+def first(*values):
+    for value in values:
+        if value is not None:
+            return value
+    return ""
+
+
+def list_text(values):
+    if not values:
+        return ""
+    return "\n".join(str(value) for value in values)
+
+
+def selected(value, expected):
+    return "selected" if str(value) == str(expected) else ""
+
+
+def diagnostic_message(result):
+    text = (result.stdout or result.stderr or "").strip()
+    if not text:
+        return ""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return text
+    diagnostics = data.get("diagnostics", [])
+    if diagnostics:
+        return "\n".join(
+            f"{item.get('severity', 'error')}: {item.get('message', '')}".strip()
+            for item in diagnostics
+        )
+    if data.get("applied") is True:
+        return "Configuration saved and reloaded."
+    return text
+
+
+def load_config(omux):
+    result = subprocess.run(
+        [omux, "config", "get", "--json"],
+        text=True,
+        capture_output=True,
+    )
+    raw = result.stdout if result.returncode == 0 else (result.stderr or result.stdout)
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {"values": {}, "diagnostics": [{"severity": "error", "message": raw}]}
+
+
+def render_document(config, notice=None, notice_kind="success", details=None):
+    values = config.get("values", {})
+    defaults = config.get("defaults", {})
+    terminal = values.get("terminal", {})
+    persisted = terminal.get("persistedScrollback", {})
+    workspace = values.get("workspace", {})
+    ui = values.get("ui", {})
+    panes = ui.get("panes", {})
+    icons = ui.get("icons", {})
+    plugins = values.get("plugins", {})
+    markdown = plugins.get("markdownPreview", {})
+
+    diagnostics = config.get("diagnostics", [])
+    diagnostic_html = "".join(
+        f"<li>{esc(d.get('severity', 'error'))}: {esc(d.get('message', ''))}</li>"
+        for d in diagnostics
+    )
+
+    auto_check_update = first(values.get("autoCheckUpdate"), defaults.get("autoCheckUpdate"))
+    theme_name = first(values.get("themeName"), defaults.get("themeName"))
+    workspace_default_root = first(workspace.get("defaultRootPath"), defaults.get("workspaceDefaultRootPath"))
+    font_family = terminal.get("fontFamily")
+    font_size = terminal.get("fontSize")
+    scrollback_lines = terminal.get("scrollbackLines")
+    option_as_alt = first(terminal.get("optionAsAlt"), "disabled")
+    persisted_enabled = first(persisted.get("enabled"), defaults.get("persistedScrollbackEnabled"))
+    persisted_max_lines = first(persisted.get("maxLines"), defaults.get("persistedScrollbackLines"))
+    persisted_max_bytes = first(persisted.get("maxBytes"), defaults.get("persistedScrollbackBytes"))
+    inactive_opacity = first(panes.get("inactiveOpacity"), defaults.get("inactivePaneOpacity"))
+    idle_status_clear = first(panes.get("idleStatusClear"), defaults.get("idleStatusClear"))
+    icons_enabled = first(icons.get("enabled"), defaults.get("iconsEnabled"))
+    icon_provider = first(icons.get("provider"), defaults.get("iconProvider"))
+    icon_font_family = icons.get("fontFamily")
+    icon_colors_enabled = first(icons.get("colorsEnabled"), defaults.get("iconColorsEnabled"))
+    markdown_enabled = first(markdown.get("enabled"), defaults.get("markdownPreviewEnabled"))
+    markdown_renderer = first(markdown.get("renderer"), defaults.get("markdownPreviewRenderer"))
+    markdown_theme = first(markdown.get("theme"), defaults.get("markdownPreviewTheme"))
+    hook_registries = list_text(values.get("registries", {}).get("hooks", defaults.get("hookRegistries", [])))
+    plugin_registries = list_text(values.get("registries", {}).get("plugins", defaults.get("pluginRegistries", [])))
+    notice_html = ""
+    if notice:
+        detail_html = f"<pre>{esc(details)}</pre>" if details else ""
+        notice_html = f"<div class='notice {esc(notice_kind)}'><strong>{esc(notice)}</strong>{detail_html}</div>"
+
+    return f"""<!doctype html>
 <meta charset="utf-8">
 <style>
 body {{ margin: 0; padding: 24px; font: 14px -apple-system, BlinkMacSystemFont, sans-serif; color: #f5f5f5; background: #101014; }}
@@ -123,37 +153,83 @@ h1 {{ margin-top: 0; }}
 form {{ display: grid; gap: 16px; max-width: 760px; }}
 fieldset {{ border: 1px solid #333542; border-radius: 10px; padding: 16px; }}
 label {{ display: grid; gap: 6px; margin: 10px 0; }}
-input, select {{ padding: 8px; border-radius: 6px; border: 1px solid #444653; background: #1d1d24; color: #f5f5f5; }}
+label.check {{ display: flex; align-items: center; gap: 8px; }}
+input, select, textarea {{ padding: 8px; border-radius: 6px; border: 1px solid #444653; background: #1d1d24; color: #f5f5f5; }}
+textarea {{ min-height: 84px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }}
 button {{ width: max-content; padding: 9px 14px; border: 0; border-radius: 6px; background: #6aa9ff; color: #081018; font-weight: 600; }}
+button:disabled {{ opacity: 0.65; }}
+.hint {{ color: #a7a7b7; font-size: 12px; margin-top: -4px; }}
+.actions {{ display: flex; align-items: center; gap: 12px; }}
+#status {{ color: #a7d38c; }}
 .diagnostics {{ color: #ffcf70; }}
+.notice {{ max-width: 760px; margin: 0 0 16px; padding: 12px 14px; border-radius: 10px; border: 1px solid #333542; }}
+.notice.success {{ background: rgba(96, 180, 120, 0.12); border-color: rgba(96, 180, 120, 0.45); color: #b8efc1; }}
+.notice.error {{ background: rgba(255, 112, 112, 0.12); border-color: rgba(255, 112, 112, 0.45); color: #ffb8b8; }}
+.notice pre {{ margin: 10px 0 0; white-space: pre-wrap; color: inherit; }}
 </style>
 <h1>OpenMUX Settings</h1>
-<p>Edits supported OpenMUX-owned config keys. The canonical file remains config.toml.</p>
+<p>Edits all currently supported OpenMUX-owned config keys. Empty optional fields stay unset; required fields use defaults when missing. The canonical file remains config.toml.</p>
+{notice_html}
 {"<ul class='diagnostics'>" + diagnostic_html + "</ul>" if diagnostic_html else ""}
 <form id="settings">
   <fieldset>
     <legend>General</legend>
-    <label>Theme <input id="themeName" value="{esc(values.get('themeName'))}"></label>
-    <label><input id="autoCheckUpdate" type="checkbox" {checked(values.get('autoCheckUpdate'))}> Check for updates automatically</label>
-    <label>Workspace default root <input id="workspaceDefaultRootPath" value="{esc(workspace.get('defaultRootPath'))}"></label>
+    <label>Theme <input id="themeName" value="{esc(theme_name)}"></label>
+    <label class="check"><input id="autoCheckUpdate" type="checkbox" {checked(auto_check_update)}> Check for updates automatically</label>
+    <label>Workspace default root <input id="workspaceDefaultRootPath" value="{esc(workspace_default_root)}"></label>
   </fieldset>
   <fieldset>
     <legend>Terminal</legend>
-    <label>Font family <input id="fontFamily" value="{esc(terminal.get('fontFamily'))}"></label>
-    <label>Font size <input id="fontSize" type="number" min="6" max="72" value="{esc(terminal.get('fontSize'))}"></label>
-    <label>Scrollback lines <input id="scrollbackLines" type="number" min="100" value="{esc(terminal.get('scrollbackLines'))}"></label>
-    <label><input id="persistedEnabled" type="checkbox" {checked(persisted.get('enabled'))}> Persist scrollback</label>
-    <label>Persisted max lines <input id="persistedMaxLines" type="number" min="100" value="{esc(persisted.get('maxLines'))}"></label>
-    <label>Persisted max bytes <input id="persistedMaxBytes" type="number" min="1024" value="{esc(persisted.get('maxBytes'))}"></label>
+    <label>Font family <input id="fontFamily" value="{esc(font_family)}" placeholder="unset"></label>
+    <label>Font size <input id="fontSize" type="number" min="6" max="72" value="{esc(font_size)}" placeholder="unset"></label>
+    <label>Scrollback lines <input id="scrollbackLines" type="number" min="100" value="{esc(scrollback_lines)}" placeholder="unset"></label>
+    <label>Option as Alt
+      <select id="optionAsAlt">
+        <option value="disabled" {selected(option_as_alt, "disabled")}>disabled</option>
+        <option value="both" {selected(option_as_alt, "both")}>both</option>
+        <option value="left" {selected(option_as_alt, "left")}>left</option>
+        <option value="right" {selected(option_as_alt, "right")}>right</option>
+      </select>
+    </label>
+    <label class="check"><input id="persistedEnabled" type="checkbox" {checked(persisted_enabled)}> Persist scrollback</label>
+    <label>Persisted max lines <input id="persistedMaxLines" type="number" min="100" value="{esc(persisted_max_lines)}"></label>
+    <label>Persisted max bytes <input id="persistedMaxBytes" type="number" min="1024" value="{esc(persisted_max_bytes)}"></label>
   </fieldset>
   <fieldset>
     <legend>UI</legend>
-    <label>Inactive pane opacity <input id="inactiveOpacity" type="number" min="0.1" max="1" step="0.05" value="{esc(panes.get('inactiveOpacity'))}"></label>
-    <label><input id="iconsEnabled" type="checkbox" {checked(icons.get('enabled'))}> Enable icons</label>
-    <label><input id="iconColorsEnabled" type="checkbox" {checked(icons.get('colorsEnabled'))}> Enable icon colors</label>
-    <label><input id="markdownPreviewEnabled" type="checkbox" {checked(markdown.get('enabled'))}> Enable markdown preview plugin</label>
+    <label>Inactive pane opacity <input id="inactiveOpacity" type="number" min="0.1" max="1" step="0.05" value="{esc(inactive_opacity)}"></label>
+    <label>Idle status clear
+      <select id="idleStatusClear">
+        <option value="on-focus" {selected(idle_status_clear, "on-focus")}>on-focus</option>
+        <option value="after-delay" {selected(idle_status_clear, "after-delay")}>after-delay</option>
+        <option value="never" {selected(idle_status_clear, "never")}>never</option>
+      </select>
+    </label>
+    <label class="check"><input id="iconsEnabled" type="checkbox" {checked(icons_enabled)}> Enable icons</label>
+    <label>Icon provider
+      <select id="iconProvider">
+        <option value="sf-symbols" {selected(icon_provider, "sf-symbols")}>sf-symbols</option>
+        <option value="nerd-font" {selected(icon_provider, "nerd-font")}>nerd-font</option>
+        <option value="text" {selected(icon_provider, "text")}>text</option>
+      </select>
+    </label>
+    <label>Icon font family <input id="iconFontFamily" value="{esc(icon_font_family)}" placeholder="unset"></label>
+    <label class="check"><input id="iconColorsEnabled" type="checkbox" {checked(icon_colors_enabled)}> Enable icon colors</label>
   </fieldset>
-  <button type="submit">Save</button>
+  <fieldset>
+    <legend>Markdown Preview</legend>
+    <label class="check"><input id="markdownPreviewEnabled" type="checkbox" {checked(markdown_enabled)}> Enable markdown preview plugin</label>
+    <label>Renderer <input id="markdownRenderer" value="{esc(markdown_renderer)}"></label>
+    <label>Theme <input id="markdownTheme" value="{esc(markdown_theme)}"></label>
+  </fieldset>
+  <fieldset>
+    <legend>Registries</legend>
+    <label>Hook registries <textarea id="hookRegistries">{esc(hook_registries)}</textarea></label>
+    <p class="hint">One URL per line.</p>
+    <label>Plugin registries <textarea id="pluginRegistries">{esc(plugin_registries)}</textarea></label>
+    <p class="hint">One URL per line.</p>
+  </fieldset>
+  <div class="actions"><button id="save" type="submit">Save</button><span id="status"></span></div>
 </form>
 <script>
 const numberOrNull = id => {{
@@ -164,8 +240,16 @@ const textOrNull = id => {{
   const value = document.getElementById(id).value.trim();
   return value === '' ? null : value;
 }};
+const lines = id => document.getElementById(id).value.split('\\n').map(value => value.trim()).filter(Boolean);
 document.getElementById('settings').addEventListener('submit', event => {{
   event.preventDefault();
+  const status = document.getElementById('status');
+  if (!window.omux || !window.omux.submitAction) {{
+    status.textContent = 'OpenMUX action bridge is unavailable. Reopen this pane with a newer OpenMUX build.';
+    return;
+  }}
+  document.getElementById('save').disabled = true;
+  status.textContent = 'Saving...';
   window.omux.submitAction('save', {{
     autoCheckUpdate: document.getElementById('autoCheckUpdate').checked,
     themeName: textOrNull('themeName'),
@@ -173,6 +257,7 @@ document.getElementById('settings').addEventListener('submit', event => {{
       fontFamily: textOrNull('fontFamily'),
       fontSize: numberOrNull('fontSize'),
       scrollbackLines: numberOrNull('scrollbackLines'),
+      optionAsAlt: document.getElementById('optionAsAlt').value,
       persistedScrollback: {{
         enabled: document.getElementById('persistedEnabled').checked,
         maxLines: numberOrNull('persistedMaxLines'),
@@ -181,21 +266,149 @@ document.getElementById('settings').addEventListener('submit', event => {{
     }},
     workspace: {{ defaultRootPath: textOrNull('workspaceDefaultRootPath') }},
     ui: {{
-      panes: {{ inactiveOpacity: numberOrNull('inactiveOpacity') }},
+      panes: {{
+        inactiveOpacity: numberOrNull('inactiveOpacity'),
+        idleStatusClear: document.getElementById('idleStatusClear').value
+      }},
       icons: {{
         enabled: document.getElementById('iconsEnabled').checked,
+        provider: document.getElementById('iconProvider').value,
+        fontFamily: textOrNull('iconFontFamily'),
         colorsEnabled: document.getElementById('iconColorsEnabled').checked
       }}
     }},
-    plugins: {{ markdownPreview: {{ enabled: document.getElementById('markdownPreviewEnabled').checked }} }}
+    plugins: {{
+      markdownPreview: {{
+        enabled: document.getElementById('markdownPreviewEnabled').checked,
+        renderer: textOrNull('markdownRenderer'),
+        theme: textOrNull('markdownTheme')
+      }}
+    }},
+    registries: {{
+      hooks: lines('hookRegistries'),
+      plugins: lines('pluginRegistries')
+    }}
   }});
 }});
 </script>
 """
 
-with open(target, "w", encoding="utf-8") as handle:
-    handle.write(document)
-PY
 
-omux extension-pane create --plugin settings-ui --title "Settings" --html-file "$HTML_FILE" --actions
-rm -f "$HTML_FILE"
+def write_temp_html(document):
+    html_file = tempfile.NamedTemporaryFile("w", suffix=".html", delete=False)
+    try:
+        html_file.write(document)
+        return html_file.name
+    finally:
+        html_file.close()
+
+
+def run_update(omux, pane_id, plugin_id, document):
+    html_path = write_temp_html(document)
+    try:
+        return subprocess.run(
+            [
+                omux,
+                "extension-pane",
+                "update",
+                "--pane",
+                pane_id,
+                "--plugin",
+                plugin_id,
+                "--title",
+                "Settings",
+                "--html-file",
+                html_path,
+                "--actions",
+            ],
+            text=True,
+            capture_output=True,
+        )
+    finally:
+        try:
+            os.unlink(html_path)
+        except OSError:
+            pass
+
+
+def handle_action(omux, action_file_path):
+    with open(action_file_path, "r", encoding="utf-8") as action_file:
+        request = json.load(action_file)
+    pane_id = request.get("paneID", "")
+    plugin_id = request.get("pluginID", "settings-ui")
+    action = request.get("action", "")
+
+    if action != "save":
+        print(json.dumps({"success": False, "message": f"unsupported action: {action}"}))
+        return 0
+
+    payload = request.get("payload", {})
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as payload_file:
+        json.dump(payload, payload_file)
+        payload_path = payload_file.name
+
+    try:
+        apply_result = subprocess.run(
+            [omux, "config", "apply", "--json-file", payload_path],
+            text=True,
+            capture_output=True,
+        )
+    finally:
+        try:
+            os.unlink(payload_path)
+        except OSError:
+            pass
+
+    ok = apply_result.returncode == 0
+    config = load_config(omux)
+    detail = diagnostic_message(apply_result)
+    document = render_document(
+        config,
+        notice="Saved and reloaded." if ok else "Save failed.",
+        notice_kind="success" if ok else "error",
+        details=None if ok else detail,
+    )
+    update_result = run_update(omux, pane_id, plugin_id, document)
+    if update_result.returncode != 0:
+        print(json.dumps({
+            "success": False,
+            "message": (update_result.stderr or update_result.stdout or "Failed to refresh settings pane.").strip(),
+        }))
+        return 1
+
+    print(json.dumps({"success": ok, "message": "Saved and reloaded." if ok else detail}))
+    return 0 if ok else 1
+
+
+omux = resolve_omux()
+if omux is None:
+    print("Could not find the omux CLI from the OpenMUX app environment.", file=sys.stderr)
+    sys.exit(1)
+
+action_file_path = os.environ.get("ACTION_FILE", "")
+if action_file_path:
+    try:
+        sys.exit(handle_action(omux, action_file_path))
+    finally:
+        try:
+            os.unlink(action_file_path)
+        except OSError:
+            pass
+
+config = load_config(omux)
+html_path = write_temp_html(render_document(config))
+try:
+    create_result = subprocess.run(
+        [omux, "extension-pane", "create", "--plugin", "settings-ui", "--title", "Settings", "--html-file", html_path, "--actions"],
+        text=True,
+        capture_output=True,
+    )
+    if create_result.returncode != 0:
+        print((create_result.stderr or create_result.stdout or "Failed to open Settings pane.").strip(), file=sys.stderr)
+        sys.exit(create_result.returncode)
+finally:
+    try:
+        os.unlink(html_path)
+    except OSError:
+        pass
+PY
