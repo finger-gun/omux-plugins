@@ -1,0 +1,16 @@
+schema = 1
+id = "macos-notify"
+name = "macOS Notify"
+description = "Sends a native macOS notification from the terminal."
+version = "0.1.0"
+license = "Apache-2.0"
+kind = "plugin"
+
+[plugin]
+command = "macos-notify"
+entrypoint = "plugin"
+
+[files.entrypoint]
+source = "plugin"
+target = "plugin"
+executable = true

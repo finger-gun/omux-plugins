@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+usage: omux macos-notify <title> [body] [--subtitle <text>] [--sound <name>]
+
+Sends a native macOS notification using the built-in notification system.
+
+Examples:
+  omux macos-notify "Build finished" "All tests passed"
+  omux macos-notify "Needs input" --subtitle "OpenMUX" --sound Ping
+EOF
+}
+
+subtitle=""
+sound=""
+positionals=()
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --subtitle)
+      if [ "$#" -lt 2 ]; then
+        printf 'macos-notify: --subtitle requires a value\n' >&2
+        exit 1
+      fi
+      subtitle="$2"
+      shift 2
+      ;;
+    --sound)
+      if [ "$#" -lt 2 ]; then
+        printf 'macos-notify: --sound requires a value\n' >&2
+        exit 1
+      fi
+      sound="$2"
+      shift 2
+      ;;
+    --)
+      shift
+      while [ "$#" -gt 0 ]; do
+        positionals+=("$1")
+        shift
+      done
+      ;;
+    -*)
+      printf 'macos-notify: unknown option: %s\n' "$1" >&2
+      exit 1
+      ;;
+    *)
+      positionals+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [ "${#positionals[@]}" -lt 1 ] || [ "${#positionals[@]}" -gt 2 ]; then
+  usage >&2
+  exit 1
+fi
+
+title="${positionals[0]}"
+body="${positionals[1]:-}"
+
+osascript - "$title" "$body" "$subtitle" "$sound" <<'OSA'
+on run argv
+  set notificationTitle to item 1 of argv
+  set notificationBody to item 2 of argv
+  set notificationSubtitle to item 3 of argv
+  set notificationSound to item 4 of argv
+
+  if notificationSubtitle is not "" and notificationSound is not "" then
+    display notification notificationBody with title notificationTitle subtitle notificationSubtitle sound name notificationSound
+  else if notificationSubtitle is not "" then
+    display notification notificationBody with title notificationTitle subtitle notificationSubtitle
+  else if notificationSound is not "" then
+    display notification notificationBody with title notificationTitle sound name notificationSound
+  else
+    display notification notificationBody with title notificationTitle
+  end if
+end run
+OSA

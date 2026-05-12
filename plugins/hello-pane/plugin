@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+  cat <<'EOF'
+usage: omux hello-pane [message]
+
+Creates a sample extension pane owned by the hello-pane plugin.
+EOF
+  exit 0
+fi
+
+message="${*:-This pane is owned by OpenMUX and was created by an external plugin.}"
+
+html="$(
+  python3 - "$message" <<'PY'
+import html
+import sys
+
+message = html.escape(sys.argv[1])
+print(f"""<main style="font: 14px -apple-system, BlinkMacSystemFont, sans-serif; padding: 24px; line-height: 1.5;">
+  <h1>Hello from a plugin</h1>
+  <p>{message}</p>
+  <p><code>hello-pane</code> is installed from the OpenMUX plugin registry.</p>
+</main>""")
+PY
+)"
+
+omux extension-pane create \
+  --plugin dev.fingergun.hello-pane \
+  --title "Hello" \
+  --html "$html"

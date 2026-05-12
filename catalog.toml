@@ -1,0 +1,17 @@
+schema = 1
+
+[packages.hello-pane]
+kind = "plugin"
+name = "Hello Pane"
+description = "Creates a sample extension pane."
+version = "0.1.0"
+path = "plugins/hello-pane/omux-plugin.toml"
+tags = ["demo", "extension-pane"]
+
+[packages.macos-notify]
+kind = "plugin"
+name = "macOS Notify"
+description = "Sends a native macOS notification from the terminal."
+version = "0.1.0"
+path = "plugins/macos-notify/omux-plugin.toml"
+tags = ["notifications", "macos", "automation"]
