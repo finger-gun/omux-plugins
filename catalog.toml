@@ -15,3 +15,11 @@ description = "Sends a native macOS notification from the terminal."
 version = "0.1.0"
 path = "plugins/macos-notify/omux-plugin.toml"
 tags = ["notifications", "macos", "automation"]
+
+[packages.settings-ui]
+kind = "plugin"
+name = "Settings UI"
+description = "Opens a graphical settings editor for OpenMUX config.toml."
+version = "0.1.0"
+path = "plugins/settings-ui/omux-plugin.toml"
+tags = ["settings", "configuration", "extension-pane"]

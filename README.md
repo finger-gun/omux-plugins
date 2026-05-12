@@ -33,6 +33,7 @@ For local testing against a clone of this repository:
 omux plugins discover --registry file://$HOME/projects/omux-plugins
 omux plugins install hello-pane --registry file://$HOME/projects/omux-plugins
 omux plugins install macos-notify --registry file://$HOME/projects/omux-plugins
+omux plugins install settings-ui --registry file://$HOME/projects/omux-plugins
 ```
 
 Installing a package copies its files into `~/.omux/plugins/<command>/`. OpenMUX never runs code from the registry during discovery or install; installed plugins run later as local executable commands.
@@ -78,14 +79,27 @@ Plugin entrypoints can be Bash, TypeScript, native binaries, or any other execut
 
 ## Current plugins
 
-The initial registry packages include a minimal extension-pane example and a small macOS automation helper:
+The initial registry packages include a minimal extension-pane example, a small macOS automation helper, and a graphical config editor:
 
 | Package | Command | What it does |
 | --- | --- | --- |
 | `hello-pane` | `omux hello-pane` | Creates a sample extension pane with local HTML content. |
 | `macos-notify` | `omux macos-notify` | Sends a native macOS notification using the built-in notification system. |
+| `settings-ui` | `omux settings-ui` | Opens an extension-pane form for supported `config.toml` settings and saves through `omux config apply`. |
 
 OpenMUX also ships a bundled `markdown-preview` plugin and a built-in `omux notify` command in the main app. They are not duplicated here because built-in `omux` commands take precedence over external plugins and cannot be shadowed by registry packages.
+
+`settings-ui` also declares a native menu contribution:
+
+```toml
+[menu.configuration.open-settings]
+location = "Configuration"
+title = "Open Settings"
+command = "settings-ui"
+arguments = []
+```
+
+When installed in a version of OpenMUX that supports plugin menu contributions, this appears under **Configuration -> Open Settings**. The plugin uses extension-pane actions for Save and never writes `config.toml` directly.
 
 ## Trust model
 
