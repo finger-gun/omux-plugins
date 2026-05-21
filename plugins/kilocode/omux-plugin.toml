@@ -1,0 +1,28 @@
+schema = 1
+id = "kilocode"
+name = "KiloCode Agent Sessions"
+description = "Indexes KiloCode sessions from the local SQLite store."
+version = "0.1.0"
+license = "Apache-2.0"
+kind = "plugin"
+
+[plugin]
+command = "agent-sessions.kilocode"
+entrypoint = "plugin"
+
+[agent-sessions]
+name = "kilocode"
+callback = "__omux_agent_sessions"
+arguments = ["discover"]
+source_kind = "kilocode_sqlite"
+resume_command = "kilo -s {session_id}"
+
+[files.entrypoint]
+source = "plugin"
+target = "plugin"
+executable = true
+
+[files.manifest]
+source = "omux-plugin.toml"
+target = "omux-plugin.toml"
+executable = false

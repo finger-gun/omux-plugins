@@ -31,3 +31,11 @@ description = "Indexes OpenCode sessions from the local SQLite store."
 version = "0.1.0"
 path = "plugins/opencode/omux-plugin.toml"
 tags = ["agent-sessions", "opencode", "sqlite"]
+
+[packages.kilocode]
+kind = "plugin"
+name = "KiloCode Agent Sessions"
+description = "Indexes KiloCode sessions from the local SQLite store."
+version = "0.1.0"
+path = "plugins/kilocode/omux-plugin.toml"
+tags = ["agent-sessions", "kilocode", "sqlite"]

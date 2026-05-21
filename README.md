@@ -89,6 +89,7 @@ Plugin entrypoints can be Bash, TypeScript, native binaries, or any other execut
 | `macos-notify` | `omux macos-notify` | Sends a native macOS notification using the built-in notification system. |
 | `settings-ui` | `omux settings-ui` | Opens an extension-pane form for supported `config.toml` settings and saves through `omux config apply`. |
 | `opencode` | `omux opencode` | Adds OpenCode sessions to the Agent Sessions sidebar by reading OpenCode's local SQLite database. |
+| `kilocode` | `omux kilocode` | Adds KiloCode sessions to the Agent Sessions sidebar by reading KiloCode's local SQLite database. |
 
 OpenMUX also ships bundled plugins in the main app. They are not duplicated here when they are app-owned or when their command names are reserved by built-in `omux` commands.
 
