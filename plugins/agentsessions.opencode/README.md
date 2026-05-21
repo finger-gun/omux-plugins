@@ -51,7 +51,7 @@ The plugin command is namespaced as `agent-sessions.opencode`, while `[agent-ses
 OpenMUX calls the plugin during Agent Sessions reindex:
 
 ```sh
-~/.omux/plugins/agentsessions.opencode/plugin __omux_agent_sessions discover
+~/.omux/plugins/agent-sessions.opencode/plugin __omux_agent_sessions discover
 ```
 
 The callback prints JSON like:
