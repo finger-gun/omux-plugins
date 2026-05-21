@@ -193,7 +193,7 @@ enabled = false
 enabled = true
 ```
 
-See [`plugins/opencode`](./plugins/opencode) for a complete SQLite-backed example.
+See [`plugins/agentsessions.opencode`](./plugins/agentsessions.opencode) for a complete SQLite-backed example.
 
 ## OpenCode example
 

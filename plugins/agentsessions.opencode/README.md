@@ -16,7 +16,7 @@ The plugin reads the `session` table and emits normalized JSON rows that OpenMUX
 ```mermaid
 flowchart LR
     DB["OpenCode SQLite DB<br/>session table"]
-    Plugin["plugins/opencode/plugin"]
+    Plugin["plugins/agentsessions.opencode/plugin"]
     JSON["Normalized session JSON"]
     Index["OpenMUX Agent Sessions index"]
     UI["Sidebar and resume flow"]
@@ -51,7 +51,7 @@ The plugin command is namespaced as `agent-sessions.opencode`, while `[agent-ses
 OpenMUX calls the plugin during Agent Sessions reindex:
 
 ```sh
-~/.omux/plugins/opencode/plugin __omux_agent_sessions discover
+~/.omux/plugins/agentsessions.opencode/plugin __omux_agent_sessions discover
 ```
 
 The callback prints JSON like:
@@ -76,7 +76,7 @@ Only `id` is required. The other fields improve display, filtering, and diagnost
 Install from the default OpenMUX plugin registry:
 
 ```sh
-omux plugins install opencode
+omux plugins install agentsessions.opencode
 ```
 
 Then reindex Agent Sessions from OpenMUX or the CLI:
@@ -99,19 +99,19 @@ enabled = false
 Run against your local OpenCode database:
 
 ```sh
-plugins/opencode/plugin __omux_agent_sessions discover
+plugins/agentsessions.opencode/plugin __omux_agent_sessions discover
 ```
 
 Run against a fixture database:
 
 ```sh
-OPENCODE_DB=/tmp/opencode.db plugins/opencode/plugin __omux_agent_sessions discover
+OPENCODE_DB=/tmp/opencode.db plugins/agentsessions.opencode/plugin __omux_agent_sessions discover
 ```
 
 Validate JSON output:
 
 ```sh
-plugins/opencode/plugin __omux_agent_sessions discover | python3 -m json.tool
+plugins/agentsessions.opencode/plugin __omux_agent_sessions discover | python3 -m json.tool
 ```
 
 

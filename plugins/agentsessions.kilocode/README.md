@@ -32,7 +32,7 @@ resume_command = "kilo -s {session_id}"
 Install from the default OpenMUX plugin registry:
 
 ```sh
-omux plugins install kilocode
+omux plugins install agentsessions.kilocode
 ```
 
 Then reindex Agent Sessions:
@@ -51,6 +51,6 @@ enabled = false
 ## Development
 
 ```sh
-plugins/kilocode/plugin __omux_agent_sessions discover
-KILOCODE_DB=/tmp/kilo.db plugins/kilocode/plugin __omux_agent_sessions discover
+plugins/agentsessions.kilocode/plugin __omux_agent_sessions discover
+KILOCODE_DB=/tmp/kilo.db plugins/agentsessions.kilocode/plugin __omux_agent_sessions discover
 ```

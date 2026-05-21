@@ -24,18 +24,18 @@ version = "0.1.4"
 path = "plugins/settings-ui/omux-plugin.toml"
 tags = ["settings", "configuration", "extension-pane"]
 
-[packages.opencode]
+[packages."agentsessions.opencode"]
 kind = "plugin"
 name = "OpenCode Agent Sessions"
 description = "Indexes OpenCode sessions from the local SQLite store."
 version = "0.1.0"
-path = "plugins/opencode/omux-plugin.toml"
+path = "plugins/agentsessions.opencode/omux-plugin.toml"
 tags = ["agent-sessions", "opencode", "sqlite"]
 
-[packages.kilocode]
+[packages."agentsessions.kilocode"]
 kind = "plugin"
 name = "KiloCode Agent Sessions"
 description = "Indexes KiloCode sessions from the local SQLite store."
 version = "0.1.0"
-path = "plugins/kilocode/omux-plugin.toml"
+path = "plugins/agentsessions.kilocode/omux-plugin.toml"
 tags = ["agent-sessions", "kilocode", "sqlite"]
