@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DB_PATH="${OPENCODE_DB:-$HOME/.local/share/opencode/opencode.db}"
+CALLBACK="__omux_agent_sessions"
+
+usage() {
+  cat <<'EOF'
+OpenCode Agent Sessions plugin for OpenMUX.
+
+Usage:
+  plugin __omux_agent_sessions discover
+  plugin discover
+
+Environment:
+  OPENCODE_DB  Override the OpenCode SQLite database path.
+EOF
+}
+
+sql_quote() {
+  local value="$1"
+  value="${value//\'/\'\'}"
+  printf "'%s'" "$value"
+}
+
+discover_sessions() {
+  if [[ ! -f "$DB_PATH" ]]; then
+    printf '[]\n'
+    return 0
+  fi
+
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    echo "opencode agent-sessions plugin requires sqlite3" >&2
+    printf '[]\n'
+    return 0
+  fi
+
+  local db_sql
+  db_sql="$(sql_quote "$DB_PATH")"
+
+  sqlite3 -readonly -json "$DB_PATH" "
+    select
+      id,
+      coalesce(nullif(title, ''), nullif(slug, ''), id) as title,
+      coalesce(nullif(directory, ''), nullif(path, '')) as cwd,
+      cast(time_updated as text) as updated_at,
+      ${db_sql} as source_path,
+      case
+        when model is not null and json_valid(model) then json_extract(model, '$.id')
+        else nullif(model, '')
+      end as model
+    from session
+    where time_archived is null
+    order by time_updated desc
+    limit 10000;
+  "
+}
+
+case "${1:-}" in
+  "$CALLBACK")
+    shift
+    case "${1:-}" in
+      discover|"") discover_sessions ;;
+      *) echo "unsupported agent-sessions action: $1" >&2; exit 64 ;;
+    esac
+    ;;
+  discover)
+    discover_sessions
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    echo "unknown command: $1" >&2
+    usage >&2
+    exit 64
+    ;;
+esac

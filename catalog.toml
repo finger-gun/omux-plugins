@@ -23,3 +23,11 @@ description = "Opens a graphical settings editor for OpenMUX config.toml."
 version = "0.1.4"
 path = "plugins/settings-ui/omux-plugin.toml"
 tags = ["settings", "configuration", "extension-pane"]
+
+[packages.opencode]
+kind = "plugin"
+name = "OpenCode Agent Sessions"
+description = "Indexes OpenCode sessions from the local SQLite store."
+version = "0.1.0"
+path = "plugins/opencode/omux-plugin.toml"
+tags = ["agent-sessions", "opencode", "sqlite"]

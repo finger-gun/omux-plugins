@@ -2,7 +2,9 @@
 
 This repository is the official OpenMUX plugin registry. It hosts installable plugin packages that can be discovered and copied into a user's local OpenMUX configuration with the `omux` CLI.
 
-OpenMUX is a terminal-first, hackable workspace for developers. The main project lives at:
+OpenMUX is a terminal-first, hackable workspace for developers. Plugins are external executables with explicit manifests. They use public OpenMUX surfaces such as the CLI, hooks, extension panes, menu contributions, and Agent Sessions adapter callbacks.
+
+Main project:
 
 https://github.com/finger-gun/omux
 
@@ -16,6 +18,10 @@ plugins/
   hello-pane/
     omux-plugin.toml
     plugin
+  opencode/
+    omux-plugin.toml
+    plugin
+    README.md
 ```
 
 Users discover and install packages with:
@@ -27,16 +33,7 @@ omux plugins update <plugin-id>
 omux plugins uninstall <plugin-id>
 ```
 
-For local testing against a clone of this repository:
-
-```sh
-omux plugins discover --registry file://$HOME/projects/omux-plugins
-omux plugins install hello-pane --registry file://$HOME/projects/omux-plugins
-omux plugins install macos-notify --registry file://$HOME/projects/omux-plugins
-omux plugins install settings-ui --registry file://$HOME/projects/omux-plugins
-```
-
-Installing a package copies its files into `~/.omux/plugins/<command>/`. OpenMUX never runs code from the registry during discovery or install; installed plugins run later as local executable commands.
+Installing a package copies its declared files into `~/.omux/plugins/<command>/`. OpenMUX never runs code from the registry during discovery or install. Installed plugins run later as local executable commands or as manifest-declared callbacks.
 
 ## Package format
 
@@ -73,23 +70,143 @@ entrypoint = "plugin"
 source = "plugin"
 target = "plugin"
 executable = true
+
+[files.manifest]
+source = "omux-plugin.toml"
+target = "omux-plugin.toml"
+executable = false
 ```
+
+The manifest file should be installed for any plugin that contributes capabilities through `omux-plugin.toml`, such as menus, hooks, or Agent Sessions adapters. Without the installed manifest, OpenMUX can still run the command, but it cannot discover manifest-declared capabilities.
 
 Plugin entrypoints can be Bash, TypeScript, native binaries, or any other executable format with an appropriate shebang. Plugins receive their CLI arguments unchanged and can call the public `omux` CLI to interact with OpenMUX.
 
 ## Current plugins
-
-The initial registry packages include a minimal extension-pane example, a small macOS automation helper, and a graphical config editor:
 
 | Package | Command | What it does |
 | --- | --- | --- |
 | `hello-pane` | `omux hello-pane` | Creates a sample extension pane with local HTML content. |
 | `macos-notify` | `omux macos-notify` | Sends a native macOS notification using the built-in notification system. |
 | `settings-ui` | `omux settings-ui` | Opens an extension-pane form for supported `config.toml` settings and saves through `omux config apply`. |
+| `opencode` | `omux opencode` | Adds OpenCode sessions to the Agent Sessions sidebar by reading OpenCode's local SQLite database. |
 
-OpenMUX also ships a bundled `markdown-preview` plugin and a built-in `omux notify` command in the main app. They are not duplicated here because built-in `omux` commands take precedence over external plugins and cannot be shadowed by registry packages.
+OpenMUX also ships bundled plugins in the main app. They are not duplicated here when they are app-owned or when their command names are reserved by built-in `omux` commands.
 
-`settings-ui` also declares a native menu contribution:
+## Agent Sessions plugins
+
+Agent Sessions plugins let the community add support for new coding-agent harnesses without changing OpenMUX core. They are normal plugin packages with an `[agent-sessions]` table in `omux-plugin.toml`.
+
+```mermaid
+flowchart LR
+    Manifest["Installed omux-plugin.toml<br/>[agent-sessions]"]
+    Indexer["OpenMUX Agent Sessions indexer"]
+    Callback["Plugin executable callback"]
+    Store["Agent-owned files or DB"]
+    Rows["Normalized JSON rows"]
+    Sidebar["Sidebar, search, resume"]
+
+    Manifest --> Indexer
+    Indexer --> Callback
+    Callback --> Store
+    Store --> Callback
+    Callback --> Rows
+    Rows --> Indexer
+    Indexer --> Sidebar
+```
+
+The plugin's job is to normalize data. OpenMUX owns the index, sidebar, search, local delete/hide state, and resume flow.
+
+A minimal Agent Sessions manifest capability looks like this:
+
+```toml
+[plugin]
+command = "agent-sessions.my-agent"
+entrypoint = "plugin"
+
+[agent-sessions]
+name = "my-agent"
+callback = "__omux_agent_sessions"
+arguments = ["discover"]
+source_kind = "my_agent_store"
+resume_command = "my-agent resume {session_id}"
+
+[files.entrypoint]
+source = "plugin"
+target = "plugin"
+executable = true
+
+[files.manifest]
+source = "omux-plugin.toml"
+target = "omux-plugin.toml"
+executable = false
+```
+
+During reindex, OpenMUX launches the installed entrypoint with the callback and arguments:
+
+```sh
+~/.omux/plugins/agent-sessions.my-agent/plugin __omux_agent_sessions discover
+```
+
+The callback prints a JSON array to stdout:
+
+```json
+[
+  {
+    "id": "abc123",
+    "title": "Fix terminal resize",
+    "cwd": "/Users/example/project",
+    "updated_at": "2026-05-21T18:00:00Z",
+    "source_path": "/Users/example/.my-agent/sessions.db",
+    "model": "example-model"
+  }
+]
+```
+
+Required row field:
+
+| Field | Meaning |
+| --- | --- |
+| `id` | Stable upstream session ID. This is substituted into `{session_id}` for resume commands. |
+
+Optional row fields:
+
+| Field | Meaning |
+| --- | --- |
+| `title` | Display title. |
+| `cwd` | Working directory or project root. |
+| `updated_at` | Last update time as ISO-8601 or a numeric Unix timestamp. |
+| `source_path` | Source file or database path. |
+| `model` | Model display name. |
+| `git_branch` | Git branch display name. |
+| `agent` | Per-row agent name, useful when one plugin indexes multiple agents. |
+
+Diagnostics should go to stderr. If the upstream agent is not installed or has no sessions, print `[]` and exit successfully.
+
+The `[agent-sessions] name` value is the indexed and displayed Agent Sessions agent name. There is no OpenMUX-owned list of external agent names. If a community plugin intentionally replaces support for a bundled agent, users can disable the built-in adapter while leaving the plugin adapter enabled:
+
+```toml
+[agent-sessions.agents.codex]
+enabled = false
+
+[agent-sessions.external.codex-plus]
+enabled = true
+```
+
+See [`plugins/opencode`](./plugins/opencode) for a complete SQLite-backed example.
+
+## OpenCode example
+
+The `opencode` package demonstrates the intended Agent Sessions plugin pattern:
+
+- It declares a namespaced plugin command and an Agent Sessions `name` in `omux-plugin.toml`.
+- It reads OpenCode's local database at `~/.local/share/opencode/opencode.db`.
+- It uses `sqlite3 -json` to emit rows already shaped for OpenMUX.
+- It registers the correct resume command: `opencode -s {session_id}`.
+- It installs its manifest so OpenMUX can discover the adapter after installation.
+
+## Menu contributions
+
+`settings-ui` declares a native menu contribution:
 
 ```toml
 [menu.configuration.open-settings]

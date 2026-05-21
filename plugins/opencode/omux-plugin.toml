@@ -1,0 +1,28 @@
+schema = 1
+id = "opencode"
+name = "OpenCode Agent Sessions"
+description = "Indexes OpenCode sessions from the local SQLite store."
+version = "0.1.0"
+license = "Apache-2.0"
+kind = "plugin"
+
+[plugin]
+command = "agent-sessions.opencode"
+entrypoint = "plugin"
+
+[agent-sessions]
+name = "opencode"
+callback = "__omux_agent_sessions"
+arguments = ["discover"]
+source_kind = "opencode_sqlite"
+resume_command = "opencode -s {session_id}"
+
+[files.entrypoint]
+source = "plugin"
+target = "plugin"
+executable = true
+
+[files.manifest]
+source = "omux-plugin.toml"
+target = "omux-plugin.toml"
+executable = false
