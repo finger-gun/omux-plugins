@@ -16,7 +16,7 @@ The plugin reads the `session` table and emits normalized JSON rows that OpenMUX
 
 ```toml
 [plugin]
-command = "agent-sessions.kilocode"
+command = "agentsessions.kilocode"
 entrypoint = "plugin"
 
 [agent-sessions]

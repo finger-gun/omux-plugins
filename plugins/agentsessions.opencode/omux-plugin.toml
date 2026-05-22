@@ -7,7 +7,7 @@ license = "Apache-2.0"
 kind = "plugin"
 
 [plugin]
-command = "agent-sessions.opencode"
+command = "agentsessions.opencode"
 entrypoint = "plugin"
 
 [agent-sessions]

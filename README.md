@@ -88,8 +88,8 @@ Plugin entrypoints can be Bash, TypeScript, native binaries, or any other execut
 | `hello-pane` | `omux hello-pane` | Creates a sample extension pane with local HTML content. |
 | `macos-notify` | `omux macos-notify` | Sends a native macOS notification using the built-in notification system. |
 | `settings-ui` | `omux settings-ui` | Opens an extension-pane form for supported `config.toml` settings and saves through `omux config apply`. |
-| `agentsessions.opencode` | `omux agent-sessions.opencode` | Adds OpenCode sessions to the Agent Sessions sidebar by reading OpenCode's local SQLite database. |
-| `agentsessions.kilocode` | `omux agent-sessions.kilocode` | Adds KiloCode sessions to the Agent Sessions sidebar by reading KiloCode's local SQLite database. |
+| `agentsessions.opencode` | `omux agentsessions.opencode` | Adds OpenCode sessions to the Agent Sessions sidebar by reading OpenCode's local SQLite database. |
+| `agentsessions.kilocode` | `omux agentsessions.kilocode` | Adds KiloCode sessions to the Agent Sessions sidebar by reading KiloCode's local SQLite database. |
 
 OpenMUX also ships bundled plugins in the main app. They are not duplicated here when they are app-owned or when their command names are reserved by built-in `omux` commands.
 
@@ -121,7 +121,7 @@ A minimal Agent Sessions manifest capability looks like this:
 
 ```toml
 [plugin]
-command = "agent-sessions.my-agent"
+command = "agentsessions.my-agent"
 entrypoint = "plugin"
 
 [agent-sessions]
@@ -145,7 +145,7 @@ executable = false
 During reindex, OpenMUX launches the installed entrypoint with the callback and arguments:
 
 ```sh
-~/.omux/plugins/agent-sessions.my-agent/plugin __omux_agent_sessions discover
+~/.omux/plugins/agentsessions.my-agent/plugin __omux_agent_sessions discover
 ```
 
 The callback prints a JSON array to stdout:

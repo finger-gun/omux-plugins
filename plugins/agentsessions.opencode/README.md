@@ -33,7 +33,7 @@ The relevant capability is declared in `omux-plugin.toml`:
 
 ```toml
 [plugin]
-command = "agent-sessions.opencode"
+command = "agentsessions.opencode"
 entrypoint = "plugin"
 
 [agent-sessions]
@@ -44,14 +44,14 @@ source_kind = "opencode_sqlite"
 resume_command = "opencode -s {session_id}"
 ```
 
-The plugin command is namespaced as `agent-sessions.opencode`, while `[agent-sessions] name = "opencode"` is the indexed and displayed Agent Sessions agent name. OpenMUX does not need a hardcoded list of third-party plugin agents.
+The plugin command is namespaced as `agentsessions.opencode`, while `[agent-sessions] name = "opencode"` is the indexed and displayed Agent Sessions agent name. OpenMUX does not need a hardcoded list of third-party plugin agents.
 
 ## Callback
 
 OpenMUX calls the plugin during Agent Sessions reindex:
 
 ```sh
-~/.omux/plugins/agent-sessions.opencode/plugin __omux_agent_sessions discover
+~/.omux/plugins/agentsessions.opencode/plugin __omux_agent_sessions discover
 ```
 
 The callback prints JSON like:

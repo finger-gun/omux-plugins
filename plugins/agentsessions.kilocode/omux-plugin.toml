@@ -7,7 +7,7 @@ license = "Apache-2.0"
 kind = "plugin"
 
 [plugin]
-command = "agent-sessions.kilocode"
+command = "agentsessions.kilocode"
 entrypoint = "plugin"
 
 [agent-sessions]
