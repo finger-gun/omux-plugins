@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SESSIONS_ROOT="${OMP_SESSIONS_ROOT:-$HOME/.omp/agent/sessions}"
+CALLBACK="__omux_agent_sessions"
+
+usage() {
+  cat <<'USAGE'
+OMP Agent Sessions plugin for OpenMUX.
+
+Usage:
+  plugin __omux_agent_sessions discover
+  plugin discover
+
+Environment:
+  OMP_SESSIONS_ROOT  Override OMP session root (default: ~/.omp/agent/sessions)
+USAGE
+}
+
+discover_sessions() {
+  if [[ ! -d "$SESSIONS_ROOT" ]]; then
+    printf '[]\n'
+    return 0
+  fi
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "omp agent-sessions plugin requires python3" >&2
+    printf '[]\n'
+    return 0
+  fi
+
+  python3 - "$SESSIONS_ROOT" <<'PY'
+import json
+import os
+import sys
+from datetime import datetime, timezone
+
+root = sys.argv[1]
+results = []
+
+
+def parse_ts(value):
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        ts = float(value)
+        if ts > 1_000_000_000_000:
+            ts /= 1000.0
+        try:
+            return datetime.fromtimestamp(ts, tz=timezone.utc)
+        except Exception:
+            return None
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except Exception:
+        try:
+            ts = float(text)
+            if ts > 1_000_000_000_000:
+                ts /= 1000.0
+            return datetime.fromtimestamp(ts, tz=timezone.utc)
+        except Exception:
+            return None
+
+
+def isoformat_utc(dt):
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+for dirpath, _, filenames in os.walk(root):
+    for name in filenames:
+        if not name.endswith(".jsonl"):
+            continue
+        path = os.path.join(dirpath, name)
+        session_id = None
+        title = None
+        cwd = None
+        latest = None
+
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except Exception:
+                        continue
+
+                    if session_id is None:
+                        session_id = row.get("session_id") or row.get("id")
+                    if title is None:
+                        value = row.get("title")
+                        if isinstance(value, str) and value.strip():
+                            title = value.strip()
+                    if cwd is None:
+                        value = row.get("cwd")
+                        if isinstance(value, str) and value.strip():
+                            cwd = value.strip()
+
+                    ts = parse_ts(row.get("timestamp") or row.get("updated_at") or row.get("modified_at") or row.get("created_at"))
+                    if ts and (latest is None or ts > latest):
+                        latest = ts
+        except Exception:
+            continue
+
+        if not session_id:
+            base = os.path.splitext(name)[0]
+            if "_" in base:
+                session_id = base.rsplit("_", 1)[-1]
+
+        if not session_id:
+            continue
+
+        record = {
+            "id": session_id,
+            "source_path": path,
+        }
+        if title:
+            record["title"] = title
+        if cwd:
+            record["cwd"] = cwd
+        if latest:
+            record["updated_at"] = isoformat_utc(latest)
+        results.append(record)
+
+results.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
+print(json.dumps(results, ensure_ascii=False))
+PY
+}
+
+case "${1:-}" in
+  "$CALLBACK")
+    shift
+    case "${1:-}" in
+      discover|"") discover_sessions ;;
+      *) echo "unsupported agent-sessions action: $1" >&2; exit 64 ;;
+    esac
+    ;;
+  discover)
+    discover_sessions
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    echo "unknown command: $1" >&2
+    usage >&2
+    exit 64
+    ;;
+esac

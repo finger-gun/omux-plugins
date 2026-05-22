@@ -39,3 +39,11 @@ description = "Indexes KiloCode sessions from the local SQLite store."
 version = "0.1.0"
 path = "plugins/agentsessions.kilocode/omux-plugin.toml"
 tags = ["agent-sessions", "kilocode", "sqlite"]
+
+[packages."agentsessions.omp"]
+kind = "plugin"
+name = "OMP Agent Sessions"
+description = "Indexes OMP sessions from local JSONL files."
+version = "0.1.0"
+path = "plugins/agentsessions.omp/omux-plugin.toml"
+tags = ["agent-sessions", "omp", "jsonl"]
