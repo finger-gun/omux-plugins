@@ -425,8 +425,6 @@ def analyze_copilot(sessions: list[ScopedSession], start_ms: int, end_ms: int) -
         events_path = COPILOT_ROOT / session.session_id / "events.jsonl"
         if not events_path.exists():
             continue
-        latest_model = "unknown"
-        latest_ms = session.updated_at_ms
         try:
             with events_path.open("r", encoding="utf-8") as handle:
                 for raw_line in handle:
@@ -439,10 +437,7 @@ def analyze_copilot(sessions: list[ScopedSession], start_ms: int, end_ms: int) -
                         continue
                     event_type = payload.get("type")
                     event_ts = parse_timestamp_ms(payload.get("timestamp")) or session.updated_at_ms
-                    latest_ms = max(latest_ms, event_ts)
                     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-                    if event_type == "session.model_change" and data.get("newModel"):
-                        latest_model = str(data["newModel"])
                     if event_type != "session.shutdown":
                         continue
                     if event_ts < start_ms or event_ts > end_ms:
@@ -450,16 +445,12 @@ def analyze_copilot(sessions: list[ScopedSession], start_ms: int, end_ms: int) -
                     metrics = data.get("modelMetrics") if isinstance(data.get("modelMetrics"), dict) else {}
                     for model_name, metric_payload in metrics.items():
                         usage = metric_payload.get("usage") if isinstance(metric_payload, dict) else {}
-                        total = sum(
-                            int(usage.get(key) or 0)
-                            for key in [
-                                "inputTokens",
-                                "outputTokens",
-                                "cacheReadTokens",
-                                "cacheWriteTokens",
-                                "reasoningTokens",
-                            ]
-                        )
+                        input_tokens = int(usage.get("inputTokens") or 0)
+                        output_tokens = int(usage.get("outputTokens") or 0)
+                        reasoning_tokens = int(usage.get("reasoningTokens") or 0)
+                        cache_read_tokens = int(usage.get("cacheReadTokens") or 0)
+                        cache_write_tokens = int(usage.get("cacheWriteTokens") or 0)
+                        total = input_tokens + output_tokens + reasoning_tokens + cache_read_tokens + cache_write_tokens
                         if total <= 0:
                             continue
                         records.append(
@@ -468,15 +459,15 @@ def analyze_copilot(sessions: list[ScopedSession], start_ms: int, end_ms: int) -
                                 session_id=session.session_id,
                                 title=session.title,
                                 cwd=session.cwd,
-                                model=str(model_name or latest_model),
+                                model=str(model_name),
                                 total_tokens=total,
                                 source="copilot_events",
                                 updated_at_ms=event_ts,
-                                tokens_input=int(usage.get("inputTokens") or 0),
-                                tokens_output=int(usage.get("outputTokens") or 0),
-                                tokens_reasoning=int(usage.get("reasoningTokens") or 0),
-                                tokens_cache_read=int(usage.get("cacheReadTokens") or 0),
-                                tokens_cache_write=int(usage.get("cacheWriteTokens") or 0),
+                                tokens_input=input_tokens,
+                                tokens_output=output_tokens,
+                                tokens_reasoning=reasoning_tokens,
+                                tokens_cache_read=cache_read_tokens,
+                                tokens_cache_write=cache_write_tokens,
                             )
                         )
         except OSError:
@@ -528,26 +519,32 @@ def parse_timestamp_ms(value: object) -> int | None:
 
 def build_report(records: list[UsageRecord], coverage: list[CoverageItem], start_ms: int, end_ms: int, limit: int) -> dict[str, object]:
     total_tokens = sum(record.total_tokens for record in records)
+    total_input = sum(record.tokens_input or 0 for record in records)
+    total_output = sum(record.tokens_output or 0 for record in records)
+    total_reasoning = sum(record.tokens_reasoning or 0 for record in records)
+    total_cache_read = sum(record.tokens_cache_read or 0 for record in records)
+    total_cache_write = sum(record.tokens_cache_write or 0 for record in records)
+    total_no_cache = total_tokens - total_cache_read
     total_cost = sum(record.cost or 0.0 for record in records)
 
-    by_agent: dict[str, dict[str, object]] = defaultdict(lambda: {"tokens": 0, "cost": 0.0, "sessions": set(), "models": set()})
-    by_model: dict[tuple[str, str], dict[str, object]] = defaultdict(lambda: {"tokens": 0, "cost": 0.0, "sessions": set()})
-    by_session: dict[tuple[str, str], dict[str, object]] = defaultdict(lambda: {"tokens": 0, "cost": 0.0, "title": "", "cwd": None, "models": set(), "updated_at_ms": 0})
+    by_agent: dict[str, dict[str, object]] = defaultdict(new_usage_bucket)
+    by_model: dict[tuple[str, str], dict[str, object]] = defaultdict(new_usage_bucket)
+    by_session: dict[tuple[str, str], dict[str, object]] = defaultdict(new_usage_bucket)
 
     for record in records:
         agent_bucket = by_agent[record.agent]
-        agent_bucket["tokens"] = int(agent_bucket["tokens"]) + record.total_tokens
+        add_record_usage(agent_bucket, record)
         agent_bucket["cost"] = float(agent_bucket["cost"]) + float(record.cost or 0.0)
         agent_bucket["sessions"].add(record.session_id)
         agent_bucket["models"].add(record.model)
 
         model_bucket = by_model[(record.agent, record.model)]
-        model_bucket["tokens"] = int(model_bucket["tokens"]) + record.total_tokens
+        add_record_usage(model_bucket, record)
         model_bucket["cost"] = float(model_bucket["cost"]) + float(record.cost or 0.0)
         model_bucket["sessions"].add(record.session_id)
 
         session_bucket = by_session[(record.agent, record.session_id)]
-        session_bucket["tokens"] = int(session_bucket["tokens"]) + record.total_tokens
+        add_record_usage(session_bucket, record)
         session_bucket["cost"] = float(session_bucket["cost"]) + float(record.cost or 0.0)
         session_bucket["title"] = record.title
         session_bucket["cwd"] = record.cwd
@@ -559,6 +556,8 @@ def build_report(records: list[UsageRecord], coverage: list[CoverageItem], start
             {
                 "agent": agent,
                 "tokens": int(bucket["tokens"]),
+                "no_cache_tokens": int(bucket["no_cache_tokens"]),
+                "cache_read_tokens": int(bucket["tokens_cache_read"]),
                 "cost": round(float(bucket["cost"]), 6),
                 "sessions": len(bucket["sessions"]),
                 "models": len(bucket["models"]),
@@ -574,6 +573,8 @@ def build_report(records: list[UsageRecord], coverage: list[CoverageItem], start
                 "agent": agent,
                 "model": model,
                 "tokens": int(bucket["tokens"]),
+                "no_cache_tokens": int(bucket["no_cache_tokens"]),
+                "cache_read_tokens": int(bucket["tokens_cache_read"]),
                 "cost": round(float(bucket["cost"]), 6),
                 "sessions": len(bucket["sessions"]),
             }
@@ -590,6 +591,8 @@ def build_report(records: list[UsageRecord], coverage: list[CoverageItem], start
                 "title": str(bucket["title"]),
                 "cwd": bucket["cwd"],
                 "tokens": int(bucket["tokens"]),
+                "no_cache_tokens": int(bucket["no_cache_tokens"]),
+                "cache_read_tokens": int(bucket["tokens_cache_read"]),
                 "cost": round(float(bucket["cost"]), 6),
                 "models": ", ".join(sorted(bucket["models"]))[:100],
                 "updated_at": format_datetime(int(bucket["updated_at_ms"])),
@@ -611,6 +614,12 @@ def build_report(records: list[UsageRecord], coverage: list[CoverageItem], start
             "records": len(records),
             "agents": len(by_agent),
             "tokens": total_tokens,
+            "no_cache_tokens": total_no_cache,
+            "tokens_input": total_input,
+            "tokens_output": total_output,
+            "tokens_reasoning": total_reasoning,
+            "tokens_cache_read": total_cache_read,
+            "tokens_cache_write": total_cache_write,
             "cost": round(total_cost, 6),
         },
         "top_agents": top_agents,
@@ -629,6 +638,35 @@ def build_report(records: list[UsageRecord], coverage: list[CoverageItem], start
     }
 
 
+def new_usage_bucket() -> dict[str, object]:
+    return {
+        "tokens": 0,
+        "no_cache_tokens": 0,
+        "tokens_input": 0,
+        "tokens_output": 0,
+        "tokens_reasoning": 0,
+        "tokens_cache_read": 0,
+        "tokens_cache_write": 0,
+        "cost": 0.0,
+        "sessions": set(),
+        "models": set(),
+        "title": "",
+        "cwd": None,
+        "updated_at_ms": 0,
+    }
+
+
+def add_record_usage(bucket: dict[str, object], record: UsageRecord) -> None:
+    cache_read = int(record.tokens_cache_read or 0)
+    bucket["tokens"] = int(bucket["tokens"]) + record.total_tokens
+    bucket["no_cache_tokens"] = int(bucket["no_cache_tokens"]) + record.total_tokens - cache_read
+    bucket["tokens_input"] = int(bucket["tokens_input"]) + int(record.tokens_input or 0)
+    bucket["tokens_output"] = int(bucket["tokens_output"]) + int(record.tokens_output or 0)
+    bucket["tokens_reasoning"] = int(bucket["tokens_reasoning"]) + int(record.tokens_reasoning or 0)
+    bucket["tokens_cache_read"] = int(bucket["tokens_cache_read"]) + cache_read
+    bucket["tokens_cache_write"] = int(bucket["tokens_cache_write"]) + int(record.tokens_cache_write or 0)
+
+
 def render_text_report(report: dict[str, object]) -> str:
     lines: list[str] = []
     summary = report["summary"]
@@ -636,15 +674,23 @@ def render_text_report(report: dict[str, object]) -> str:
     lines.append("Agent Usage Report")
     lines.append(f"Window: {range_info['from']} -> {range_info['to']}")
     lines.append(
-        f"Records: {summary['records']}  Agents: {summary['agents']}  Tokens: {human_int(int(summary['tokens']))}  Cost: {format_cost(float(summary['cost']))}"
+        f"Records: {summary['records']}  Agents: {summary['agents']}  Processed: {human_int(int(summary['tokens']))}  No-cache: {human_int(int(summary['no_cache_tokens']))}  Cache read: {human_int(int(summary['tokens_cache_read']))}  Cost: {format_cost(float(summary['cost']))}"
     )
     lines.append("")
     lines.append("Top Agents")
     lines.append(
         format_table(
-            ["Agent", "Tokens", "Sessions", "Models", "Cost"],
+            ["Agent", "Processed", "No Cache", "Cache Read", "Sessions", "Models", "Cost"],
             [
-                [row["agent"], human_int(int(row["tokens"])), str(row["sessions"]), str(row["models"]), format_cost(float(row["cost"]))]
+                [
+                    row["agent"],
+                    human_int(int(row["tokens"])),
+                    human_int(int(row["no_cache_tokens"])),
+                    human_int(int(row["cache_read_tokens"])),
+                    str(row["sessions"]),
+                    str(row["models"]),
+                    format_cost(float(row["cost"])),
+                ]
                 for row in report["top_agents"]
             ],
         )
@@ -653,9 +699,17 @@ def render_text_report(report: dict[str, object]) -> str:
     lines.append("Top Models")
     lines.append(
         format_table(
-            ["Agent", "Model", "Tokens", "Sessions", "Cost"],
+            ["Agent", "Model", "Processed", "No Cache", "Cache Read", "Sessions", "Cost"],
             [
-                [row["agent"], row["model"], human_int(int(row["tokens"])), str(row["sessions"]), format_cost(float(row["cost"]))]
+                [
+                    row["agent"],
+                    row["model"],
+                    human_int(int(row["tokens"])),
+                    human_int(int(row["no_cache_tokens"])),
+                    human_int(int(row["cache_read_tokens"])),
+                    str(row["sessions"]),
+                    format_cost(float(row["cost"])),
+                ]
                 for row in report["top_models"]
             ],
         )
@@ -664,12 +718,14 @@ def render_text_report(report: dict[str, object]) -> str:
     lines.append("Top Sessions")
     lines.append(
         format_table(
-            ["Agent", "Session", "Tokens", "Models", "Updated", "Title"],
+            ["Agent", "Session", "Processed", "No Cache", "Cache Read", "Models", "Updated", "Title"],
             [
                 [
                     row["agent"],
                     row["session_id"],
                     human_int(int(row["tokens"])),
+                    human_int(int(row["no_cache_tokens"])),
+                    human_int(int(row["cache_read_tokens"])),
                     row["models"],
                     row["updated_at"],
                     shorten(str(row["title"]), 48),
@@ -708,25 +764,61 @@ def render_markdown_report(report: dict[str, object]) -> str:
         f"- Generated: `{report['generated_at']}`",
         f"- Records: `{summary['records']}`",
         f"- Agents ranked: `{summary['agents']}`",
-        f"- Total strict tokens: `{human_int(int(summary['tokens']))}`",
+        f"- Total processed tokens: `{human_int(int(summary['tokens']))}`",
+        f"- Total no-cache tokens: `{human_int(int(summary['no_cache_tokens']))}`",
+        f"- Total cache-read tokens: `{human_int(int(summary['tokens_cache_read']))}`",
         f"- Total known cost: `{format_cost(float(summary['cost']))}`",
         "",
         "## Top Agents",
         markdown_table(
-            ["Agent", "Tokens", "Sessions", "Models", "Cost"],
-            [[row["agent"], human_int(int(row["tokens"])), row["sessions"], row["models"], format_cost(float(row["cost"]))] for row in report["top_agents"]],
+            ["Agent", "Processed", "No Cache", "Cache Read", "Sessions", "Models", "Cost"],
+            [
+                [
+                    row["agent"],
+                    human_int(int(row["tokens"])),
+                    human_int(int(row["no_cache_tokens"])),
+                    human_int(int(row["cache_read_tokens"])),
+                    row["sessions"],
+                    row["models"],
+                    format_cost(float(row["cost"])),
+                ]
+                for row in report["top_agents"]
+            ],
         ),
         "",
         "## Top Models",
         markdown_table(
-            ["Agent", "Model", "Tokens", "Sessions", "Cost"],
-            [[row["agent"], row["model"], human_int(int(row["tokens"])), row["sessions"], format_cost(float(row["cost"]))] for row in report["top_models"]],
+            ["Agent", "Model", "Processed", "No Cache", "Cache Read", "Sessions", "Cost"],
+            [
+                [
+                    row["agent"],
+                    row["model"],
+                    human_int(int(row["tokens"])),
+                    human_int(int(row["no_cache_tokens"])),
+                    human_int(int(row["cache_read_tokens"])),
+                    row["sessions"],
+                    format_cost(float(row["cost"])),
+                ]
+                for row in report["top_models"]
+            ],
         ),
         "",
         "## Top Sessions",
         markdown_table(
-            ["Agent", "Session", "Tokens", "Models", "Updated", "Title"],
-            [[row["agent"], row["session_id"], human_int(int(row["tokens"])), row["models"], row["updated_at"], row["title"]] for row in report["top_sessions"]],
+            ["Agent", "Session", "Processed", "No Cache", "Cache Read", "Models", "Updated", "Title"],
+            [
+                [
+                    row["agent"],
+                    row["session_id"],
+                    human_int(int(row["tokens"])),
+                    human_int(int(row["no_cache_tokens"])),
+                    human_int(int(row["cache_read_tokens"])),
+                    row["models"],
+                    row["updated_at"],
+                    row["title"],
+                ]
+                for row in report["top_sessions"]
+            ],
         ),
         "",
         "## Coverage",
@@ -737,7 +829,7 @@ def render_markdown_report(report: dict[str, object]) -> str:
         "",
         "## Method",
         "",
-        "This report only ranks sessions and models where total tokens can be established directly from a native source. Agents that OpenMUX indexed but that do not yet expose strict token totals stay visible in the coverage section and are excluded from token leaderboards.",
+        "This report only ranks sessions and models where token usage can be established directly from a native source. `Processed` includes prompt cache reads when agents expose them; `No Cache` subtracts cache-read tokens so cached prompt reuse does not dominate comparisons. Agents that OpenMUX indexed but that do not yet expose strict token totals stay visible in the coverage section and are excluded from token leaderboards.",
         "",
     ]
     return "\n".join(parts)
@@ -856,7 +948,7 @@ code {{ font-family: var(--mono); font-size: 12px; }}
     <div>
       <h1>Agent Usage Report</h1>
       <p id="window"></p>
-      <p>This report ranks only sessions with direct token evidence from native agent stores that OpenMUX already indexed.</p>
+      <p>This report ranks only sessions with direct token evidence from native agent stores that OpenMUX already indexed. Processed tokens include cache reads; no-cache tokens subtract prompt cache reads.</p>
     </div>
     <div class="stats" id="stats"></div>
   </section>
@@ -906,10 +998,11 @@ function renderStats() {{
   const summary = report.summary;
   document.getElementById("window").textContent = `Window: ${{report.range.from}} -> ${{report.range.to}}`;
   document.getElementById("stats").innerHTML = [
-    stat("Strict Tokens", humanInt(summary.tokens)),
+    stat("Processed Tokens", humanInt(summary.tokens)),
+    stat("No-Cache Tokens", humanInt(summary.no_cache_tokens)),
+    stat("Cache Read", humanInt(summary.tokens_cache_read)),
     stat("Known Cost", money(summary.cost)),
     stat("Usage Records", humanInt(summary.records)),
-    stat("Ranked Agents", humanInt(summary.agents)),
   ].join("");
 }}
 
@@ -980,7 +1073,9 @@ function sortTable(table, index, type) {{
 function renderTables() {{
   buildTable("agents-table", [
     {{ key: "agent", label: "Agent" }},
-    {{ key: "tokens", label: "Tokens", type: "number", render: value => humanInt(value) }},
+    {{ key: "tokens", label: "Processed", type: "number", render: value => humanInt(value) }},
+    {{ key: "no_cache_tokens", label: "No Cache", type: "number", render: value => humanInt(value) }},
+    {{ key: "cache_read_tokens", label: "Cache Read", type: "number", render: value => humanInt(value) }},
     {{ key: "sessions", label: "Sessions", type: "number" }},
     {{ key: "models", label: "Models", type: "number" }},
     {{ key: "cost", label: "Cost", type: "number", render: value => money(value) }},
@@ -989,7 +1084,9 @@ function renderTables() {{
   buildTable("models-table", [
     {{ key: "agent", label: "Agent" }},
     {{ key: "model", label: "Model" }},
-    {{ key: "tokens", label: "Tokens", type: "number", render: value => humanInt(value) }},
+    {{ key: "tokens", label: "Processed", type: "number", render: value => humanInt(value) }},
+    {{ key: "no_cache_tokens", label: "No Cache", type: "number", render: value => humanInt(value) }},
+    {{ key: "cache_read_tokens", label: "Cache Read", type: "number", render: value => humanInt(value) }},
     {{ key: "sessions", label: "Sessions", type: "number" }},
     {{ key: "cost", label: "Cost", type: "number", render: value => money(value) }},
   ], report.top_models);
@@ -997,7 +1094,9 @@ function renderTables() {{
   buildTable("sessions-table", [
     {{ key: "agent", label: "Agent" }},
     {{ key: "session_id", label: "Session" }},
-    {{ key: "tokens", label: "Tokens", type: "number", render: value => humanInt(value) }},
+    {{ key: "tokens", label: "Processed", type: "number", render: value => humanInt(value) }},
+    {{ key: "no_cache_tokens", label: "No Cache", type: "number", render: value => humanInt(value) }},
+    {{ key: "cache_read_tokens", label: "Cache Read", type: "number", render: value => humanInt(value) }},
     {{ key: "models", label: "Models" }},
     {{ key: "updated_at", label: "Updated" }},
     {{ key: "title", label: "Title" }},
