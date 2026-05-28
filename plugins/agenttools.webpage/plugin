@@ -11,15 +11,16 @@ Webpage Agent Tool plugin for OpenMUX.
 
 Usage:
   plugin __omux_agent_tool
-  plugin <url> [focus text...]
+  plugin [--summarize] <url> [focus text...]
 
 Input contract:
   First line: URL
   Optional following lines: focus or extraction goals
 
 Examples:
-  omux agenttools.webpage https://example.com
-  omux agenttools.webpage https://example.com "Summarize the API changes"
+  omux agenttools.webpage https://openmux.fingergun.dev
+  omux agenttools.webpage https://openmux.fingergun.dev "Summarize the API changes"
+  omux agenttools.webpage --summarize https://openmux.fingergun.dev "Summarize the API changes"
 EOF
 }
 
