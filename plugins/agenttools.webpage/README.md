@@ -8,9 +8,9 @@ This package adds the first custom agent tool plugin to the OpenMUX registry.
 
 - `agenttools.webpage.read-url`
 
-The tool accepts a single text input where the first non-empty line is a URL and any following lines are optional focus instructions. It fetches the page with `curl`, extracts readable text with Python stdlib HTML parsing, and then runs a nested `omux agent -p` pass to return a compact plain-text summary suitable for the small local model context window.
+The tool accepts a single text input where the first non-empty line is a URL and any following lines are optional focus instructions. It fetches the page with `curl`, extracts readable text with Python stdlib HTML parsing, then ranks semantic chunks against the requested focus and runs a bounded multi-pass nested `omux agent -p` flow: one pass per top chunk and a final synthesis pass over the chunk notes.
 
-If nested summarization is unavailable, the plugin falls back to deterministic cleaned webpage text with title and source metadata.
+If nested summarization is unavailable, the plugin falls back to deterministic focus-ranked webpage text with title and source metadata.
 
 ## Manifest
 
@@ -69,6 +69,8 @@ The plugin also works as a normal CLI command for local testing:
 omux agenttools.webpage https://example.com
 omux agenttools.webpage https://example.com "Focus on release changes"
 ```
+
+The optional extra arguments are joined into one focus string and given extra weight during chunk ranking and summarization.
 
 ## Development
 
