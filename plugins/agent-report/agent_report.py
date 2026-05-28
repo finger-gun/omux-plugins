@@ -48,6 +48,7 @@ class UsageRecord:
     tokens_reasoning: int | None = None
     tokens_cache_read: int | None = None
     tokens_cache_write: int | None = None
+    no_cache_tokens: int | None = None
     cost: float | None = None
 
 
@@ -245,6 +246,7 @@ def analyze_codex(sessions: list[ScopedSession], start_ms: int, end_ms: int) -> 
     query = f"""
         SELECT
             id,
+            rollout_path,
             COALESCE(NULLIF(title, ''), id) AS title,
             cwd,
             COALESCE(NULLIF(model, ''), NULLIF(model_provider, ''), 'unknown') AS model_name,
@@ -260,20 +262,74 @@ def analyze_codex(sessions: list[ScopedSession], start_ms: int, end_ms: int) -> 
     params = list(session_map.keys()) + [start_ms, end_ms]
     with sqlite3.connect(CODEX_DB) as conn:
         rows = conn.execute(query, params).fetchall()
-    return [
-        UsageRecord(
-            agent="codex",
-            session_id=str(session_id),
-            title=str(title),
-            cwd=str(cwd) if cwd else session_map[str(session_id)].cwd,
-            model=str(model_name),
-            total_tokens=int(tokens_used or 0),
-            source="codex_sqlite",
-            updated_at_ms=int(updated_at_ms),
+    records: list[UsageRecord] = []
+    for session_id, rollout_path, title, cwd, model_name, tokens_used, updated_at_ms in rows:
+        total_tokens = int(tokens_used or 0)
+        usage = parse_codex_rollout_usage(Path(str(rollout_path)), end_ms)
+        if usage:
+            total_tokens = int(usage["total"])
+        if total_tokens <= 0:
+            continue
+        records.append(
+            UsageRecord(
+                agent="codex",
+                session_id=str(session_id),
+                title=str(title),
+                cwd=str(cwd) if cwd else session_map[str(session_id)].cwd,
+                model=str(model_name),
+                total_tokens=total_tokens,
+                source="codex_rollout" if usage else "codex_sqlite",
+                updated_at_ms=int(updated_at_ms),
+                tokens_input=int(usage["input"]) if usage else None,
+                tokens_output=int(usage["output"]) if usage else None,
+                tokens_reasoning=int(usage["reasoning"]) if usage else None,
+                tokens_cache_read=int(usage["cache_read"]) if usage else None,
+                tokens_cache_write=0 if usage else None,
+                no_cache_tokens=total_tokens - int(usage["cache_read"]) if usage else None,
+            )
         )
-        for session_id, title, cwd, model_name, tokens_used, updated_at_ms in rows
-        if int(tokens_used or 0) > 0
-    ]
+    return records
+
+
+def parse_codex_rollout_usage(rollout_path: Path, end_ms: int) -> dict[str, int] | None:
+    if not rollout_path.exists():
+        return None
+    best: dict[str, int] | None = None
+    try:
+        with rollout_path.open("r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                raw_line = raw_line.strip()
+                if not raw_line:
+                    continue
+                try:
+                    payload = json.loads(raw_line)
+                except json.JSONDecodeError:
+                    continue
+                if payload.get("type") != "event_msg":
+                    continue
+                event_ts = parse_timestamp_ms(payload.get("timestamp"))
+                if event_ts is not None and event_ts > end_ms:
+                    continue
+                event_payload = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+                if event_payload.get("type") != "token_count":
+                    continue
+                info = event_payload.get("info") if isinstance(event_payload.get("info"), dict) else {}
+                total_usage = info.get("total_token_usage") if isinstance(info.get("total_token_usage"), dict) else {}
+                total = int(total_usage.get("total_tokens") or 0)
+                if total <= 0:
+                    continue
+                candidate = {
+                    "total": total,
+                    "input": int(total_usage.get("input_tokens") or 0),
+                    "output": int(total_usage.get("output_tokens") or 0),
+                    "reasoning": int(total_usage.get("reasoning_output_tokens") or 0),
+                    "cache_read": int(total_usage.get("cached_input_tokens") or 0),
+                }
+                if best is None or candidate["total"] >= best["total"]:
+                    best = candidate
+    except OSError:
+        return None
+    return best
 
 
 def analyze_opencode(sessions: list[ScopedSession], start_ms: int, end_ms: int) -> list[UsageRecord]:
@@ -319,6 +375,7 @@ def analyze_opencode(sessions: list[ScopedSession], start_ms: int, end_ms: int) 
             updated_at_ms,
         ) = row
         model_name = decode_model_value(model_raw)
+        # Opencode stores uncached and cached input separately.
         total = sum(int(value or 0) for value in [tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write])
         if total <= 0:
             continue
@@ -337,6 +394,7 @@ def analyze_opencode(sessions: list[ScopedSession], start_ms: int, end_ms: int) 
                 tokens_reasoning=int(tokens_reasoning or 0),
                 tokens_cache_read=int(tokens_cache_read or 0),
                 tokens_cache_write=int(tokens_cache_write or 0),
+                no_cache_tokens=sum(int(value or 0) for value in [tokens_input, tokens_output, tokens_reasoning, tokens_cache_write]),
                 cost=float(cost or 0.0),
             )
         )
@@ -378,6 +436,7 @@ def analyze_omp(sessions: list[ScopedSession], start_ms: int, end_ms: int) -> li
                     bucket["total_tokens"] += total
                     bucket["tokens_input"] += int(usage.get("input") or 0)
                     bucket["tokens_output"] += int(usage.get("output") or 0)
+                    bucket["tokens_reasoning"] += int(usage.get("reasoning") or 0)
                     bucket["tokens_cache_read"] += int(usage.get("cacheRead") or 0)
                     bucket["tokens_cache_write"] += int(usage.get("cacheWrite") or 0)
                     cost = usage.get("cost") if isinstance(usage.get("cost"), dict) else {}
@@ -400,8 +459,10 @@ def analyze_omp(sessions: list[ScopedSession], start_ms: int, end_ms: int) -> li
                     updated_at_ms=latest_ms,
                     tokens_input=int(totals.get("tokens_input", 0)),
                     tokens_output=int(totals.get("tokens_output", 0)),
+                    tokens_reasoning=int(totals.get("tokens_reasoning", 0)),
                     tokens_cache_read=int(totals.get("tokens_cache_read", 0)),
                     tokens_cache_write=int(totals.get("tokens_cache_write", 0)),
+                    no_cache_tokens=total_tokens - int(totals.get("tokens_cache_read", 0)),
                     cost=float(totals.get("cost", 0.0)),
                 )
             )
@@ -450,7 +511,9 @@ def analyze_copilot(sessions: list[ScopedSession], start_ms: int, end_ms: int) -
                         reasoning_tokens = int(usage.get("reasoningTokens") or 0)
                         cache_read_tokens = int(usage.get("cacheReadTokens") or 0)
                         cache_write_tokens = int(usage.get("cacheWriteTokens") or 0)
-                        total = input_tokens + output_tokens + reasoning_tokens + cache_read_tokens + cache_write_tokens
+                        # Copilot's inputTokens already includes cached prompt tokens; cache
+                        # counters are a breakdown of input, not additional usage.
+                        total = input_tokens + output_tokens + reasoning_tokens
                         if total <= 0:
                             continue
                         records.append(
@@ -468,6 +531,7 @@ def analyze_copilot(sessions: list[ScopedSession], start_ms: int, end_ms: int) -
                                 tokens_reasoning=reasoning_tokens,
                                 tokens_cache_read=cache_read_tokens,
                                 tokens_cache_write=cache_write_tokens,
+                                no_cache_tokens=total - cache_read_tokens,
                             )
                         )
         except OSError:
@@ -524,7 +588,7 @@ def build_report(records: list[UsageRecord], coverage: list[CoverageItem], start
     total_reasoning = sum(record.tokens_reasoning or 0 for record in records)
     total_cache_read = sum(record.tokens_cache_read or 0 for record in records)
     total_cache_write = sum(record.tokens_cache_write or 0 for record in records)
-    total_no_cache = total_tokens - total_cache_read
+    total_no_cache = sum(no_cache_tokens(record) for record in records)
     total_cost = sum(record.cost or 0.0 for record in records)
 
     by_agent: dict[str, dict[str, object]] = defaultdict(new_usage_bucket)
@@ -657,14 +721,20 @@ def new_usage_bucket() -> dict[str, object]:
 
 
 def add_record_usage(bucket: dict[str, object], record: UsageRecord) -> None:
-    cache_read = int(record.tokens_cache_read or 0)
     bucket["tokens"] = int(bucket["tokens"]) + record.total_tokens
-    bucket["no_cache_tokens"] = int(bucket["no_cache_tokens"]) + record.total_tokens - cache_read
+    bucket["no_cache_tokens"] = int(bucket["no_cache_tokens"]) + no_cache_tokens(record)
     bucket["tokens_input"] = int(bucket["tokens_input"]) + int(record.tokens_input or 0)
     bucket["tokens_output"] = int(bucket["tokens_output"]) + int(record.tokens_output or 0)
     bucket["tokens_reasoning"] = int(bucket["tokens_reasoning"]) + int(record.tokens_reasoning or 0)
+    cache_read = int(record.tokens_cache_read or 0)
     bucket["tokens_cache_read"] = int(bucket["tokens_cache_read"]) + cache_read
     bucket["tokens_cache_write"] = int(bucket["tokens_cache_write"]) + int(record.tokens_cache_write or 0)
+
+
+def no_cache_tokens(record: UsageRecord) -> int:
+    if record.no_cache_tokens is not None:
+        return max(0, int(record.no_cache_tokens))
+    return max(0, record.total_tokens - int(record.tokens_cache_read or 0))
 
 
 def render_text_report(report: dict[str, object]) -> str:
