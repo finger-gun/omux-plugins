@@ -1,0 +1,31 @@
+schema = 1
+id = "agenttools.webpage"
+name = "Webpage Agent Tool"
+description = "Fetches a webpage and returns a compact readable summary for omux agent."
+version = "0.1.0"
+license = "Apache-2.0"
+kind = "plugin"
+
+[plugin]
+command = "agenttools.webpage"
+entrypoint = "plugin"
+
+[agent-tools.read-url]
+description = "Fetch a webpage from a URL and return a compact readable summary."
+callback = "__omux_agent_tool"
+input_hint = "First line: URL. Optional following lines: what to focus on."
+
+[files.entrypoint]
+source = "plugin"
+target = "plugin"
+executable = true
+
+[files.helper]
+source = "webpage.py"
+target = "webpage.py"
+executable = false
+
+[files.manifest]
+source = "omux-plugin.toml"
+target = "omux-plugin.toml"
+executable = false

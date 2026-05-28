@@ -47,3 +47,12 @@ description = "Indexes OMP sessions from local JSONL files."
 version = "0.1.0"
 path = "plugins/agentsessions.omp/omux-plugin.toml"
 tags = ["agent-sessions", "omp", "jsonl"]
+
+[packages."agenttools.webpage"]
+kind = "plugin"
+name = "Webpage Agent Tool"
+description = "Fetches a webpage and returns a compact readable summary for omux agent."
+version = "0.1.0"
+path = "plugins/agenttools.webpage/omux-plugin.toml"
+tags = ["agent-tools", "web", "curl", "reader"]
+

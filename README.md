@@ -90,8 +90,15 @@ Plugin entrypoints can be Bash, TypeScript, native binaries, or any other execut
 | `settings-ui` | `omux settings-ui` | Opens an extension-pane form for supported `config.toml` settings and saves through `omux config apply`. |
 | `agentsessions.opencode` | `omux agentsessions.opencode` | Adds OpenCode sessions to the Agent Sessions sidebar by reading OpenCode's local SQLite database. |
 | `agentsessions.kilocode` | `omux agentsessions.kilocode` | Adds KiloCode sessions to the Agent Sessions sidebar by reading KiloCode's local SQLite database. |
+| `agenttools.webpage` | `omux agenttools.webpage` | Adds a webpage-reading agent tool that fetches a URL, extracts readable text, and returns a compact summary through `omux agent`. |
 
 OpenMUX also ships bundled plugins in the main app. They are not duplicated here when they are app-owned or when their command names are reserved by built-in `omux` commands.
+
+## Agent tool plugins
+
+Agent tool plugins let the community add focused local tools to `omux agent` without changing OpenMUX core. They are normal manifest plugins with one or more `[agent-tools.*]` entries in `omux-plugin.toml`.
+
+The `agenttools.webpage` package is the first example. It contributes `agenttools.webpage.read-url`, which accepts a URL plus optional focus instructions, fetches the page locally, and returns a compact plain-text result.
 
 ## Agent Sessions plugins
 

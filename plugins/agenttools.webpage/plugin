@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+HELPER="$ROOT_DIR/webpage.py"
+CALLBACK="__omux_agent_tool"
+
+usage() {
+  cat <<'EOF'
+Webpage Agent Tool plugin for OpenMUX.
+
+Usage:
+  plugin __omux_agent_tool
+  plugin <url> [focus text...]
+
+Input contract:
+  First line: URL
+  Optional following lines: focus or extraction goals
+
+Examples:
+  omux agenttools.webpage https://example.com
+  omux agenttools.webpage https://example.com "Summarize the API changes"
+EOF
+}
+
+if [[ ! -f "$HELPER" ]]; then
+  echo "agenttools.webpage: helper script not found: $HELPER" >&2
+  exit 1
+fi
+
+case "${1:-}" in
+  "$CALLBACK")
+    shift
+    exec python3 "$HELPER" callback "$@"
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    exec python3 "$HELPER" cli "$@"
+    ;;
+esac
