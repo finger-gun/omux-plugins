@@ -1,0 +1,26 @@
+schema = 1
+id = "agent-report"
+name = "Agent Report"
+description = "Generates token-usage reports for agent sessions OpenMUX already knows about."
+version = "0.1.0"
+license = "Apache-2.0"
+kind = "plugin"
+
+[plugin]
+command = "agent-report"
+entrypoint = "plugin"
+
+[files.entrypoint]
+source = "plugin"
+target = "plugin"
+executable = true
+
+[files.helper]
+source = "agent_report.py"
+target = "agent_report.py"
+executable = false
+
+[files.manifest]
+source = "omux-plugin.toml"
+target = "omux-plugin.toml"
+executable = false

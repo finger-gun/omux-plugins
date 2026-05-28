@@ -56,3 +56,10 @@ version = "0.1.0"
 path = "plugins/agenttools.webpage/omux-plugin.toml"
 tags = ["agent-tools", "web", "curl", "reader"]
 
+[packages."agent-report"]
+kind = "plugin"
+name = "Agent Report"
+description = "Generates token-usage reports for agents OpenMUX already knows about."
+version = "0.1.0"
+path = "plugins/agent-report/omux-plugin.toml"
+tags = ["agent-sessions", "reporting", "tokens", "html", "markdown"]
