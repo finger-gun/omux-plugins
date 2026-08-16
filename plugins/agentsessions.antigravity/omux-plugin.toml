@@ -1,0 +1,28 @@
+schema = 1
+id = "agentsessions.antigravity"
+name = "Antigravity Agent Sessions"
+description = "Indexes Antigravity trajectories from the local VS Code state store."
+version = "0.1.0"
+license = "Apache-2.0"
+kind = "plugin"
+
+[plugin]
+command = "agentsessions.antigravity"
+entrypoint = "plugin"
+
+[agent-sessions]
+name = "antigravity"
+callback = "__omux_agent_sessions"
+arguments = ["discover"]
+source_kind = "antigravity_vscdb"
+resume_command = "agy --conversation {session_id}"
+
+[files.entrypoint]
+source = "plugin"
+target = "plugin"
+executable = true
+
+[files.manifest]
+source = "omux-plugin.toml"
+target = "omux-plugin.toml"
+executable = false

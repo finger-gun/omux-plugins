@@ -1,0 +1,250 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DB_PATH="${ANTIGRAVITY_STATE_DB:-$HOME/Library/Application Support/Antigravity/User/globalStorage/state.vscdb}"
+CALLBACK="__omux_agent_sessions"
+
+usage() {
+  cat <<'USAGE'
+Antigravity Agent Sessions plugin for OpenMUX.
+
+Usage:
+  plugin __omux_agent_sessions discover
+  plugin discover
+
+Environment:
+  ANTIGRAVITY_STATE_DB  Override the Antigravity VS Code state database path.
+USAGE
+}
+
+discover_sessions() {
+  if [[ ! -f "$DB_PATH" ]]; then
+    printf '[]\n'
+    return 0
+  fi
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "antigravity agent-sessions plugin requires python3" >&2
+    printf '[]\n'
+    return 0
+  fi
+
+  python3 - "$DB_PATH" <<'PY'
+import base64
+import binascii
+import json
+import os
+import sqlite3
+import sys
+from urllib.parse import unquote, urlparse
+
+db_path = sys.argv[1]
+storage_key = "antigravityUnifiedStateSync.trajectorySummaries"
+
+
+def diagnostic(message):
+    print(f"antigravity agent-sessions: {message}", file=sys.stderr)
+
+
+def read_varint(data, offset):
+    value = 0
+    shift = 0
+    while offset < len(data) and shift < 64:
+        byte = data[offset]
+        offset += 1
+        value |= (byte & 0x7F) << shift
+        if not byte & 0x80:
+            return value, offset
+        shift += 7
+    raise ValueError("invalid protobuf varint")
+
+
+def fields(data):
+    offset = 0
+    while offset < len(data):
+        key, offset = read_varint(data, offset)
+        field_number = key >> 3
+        wire_type = key & 0x07
+        if field_number == 0:
+            raise ValueError("invalid protobuf field number")
+        if wire_type == 0:
+            value, offset = read_varint(data, offset)
+            yield field_number, wire_type, value
+        elif wire_type == 1:
+            if offset + 8 > len(data):
+                raise ValueError("truncated fixed64 field")
+            yield field_number, wire_type, data[offset : offset + 8]
+            offset += 8
+        elif wire_type == 2:
+            length, offset = read_varint(data, offset)
+            if offset + length > len(data):
+                raise ValueError("truncated length-delimited field")
+            yield field_number, wire_type, data[offset : offset + length]
+            offset += length
+        elif wire_type == 5:
+            if offset + 4 > len(data):
+                raise ValueError("truncated fixed32 field")
+            yield field_number, wire_type, data[offset : offset + 4]
+            offset += 4
+        else:
+            raise ValueError(f"unsupported protobuf wire type {wire_type}")
+
+
+def text(value):
+    try:
+        return value.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def is_session_id(value):
+    return len(value) >= 8 and all(char.isalnum() or char == "-" for char in value)
+
+
+def decode_base64(value):
+    try:
+        return base64.b64decode(value, validate=True)
+    except (ValueError, binascii.Error):
+        return None
+
+
+def first_text_field(data, field_number):
+    for number, wire_type, value in fields(data):
+        if number == field_number and wire_type == 2:
+            return text(value)
+    return None
+
+
+def find_workspace_uri(data, depth=0):
+    if depth > 12:
+        return None
+    try:
+        nested_fields = list(fields(data))
+    except ValueError:
+        return None
+    for _, wire_type, value in nested_fields:
+        if wire_type != 2:
+            continue
+        candidate = text(value)
+        if candidate and candidate.startswith("file://"):
+            parsed = urlparse(candidate)
+            if parsed.scheme == "file" and parsed.path:
+                return unquote(parsed.path)
+    for _, wire_type, value in nested_fields:
+        if wire_type == 2:
+            workspace = find_workspace_uri(value, depth + 1)
+            if workspace:
+                return workspace
+    return None
+
+
+def title_from_prompt(prompt):
+    normalized = " ".join(prompt.split())
+    if not normalized:
+        return None
+    limit = 160
+    return normalized if len(normalized) <= limit else normalized[: limit - 1].rstrip() + "…"
+
+
+def decode_record(record):
+    session_id = first_text_field(record, 1)
+    if not session_id or not is_session_id(session_id):
+        return None
+
+    summary_envelope = None
+    for number, wire_type, value in fields(record):
+        if number == 2 and wire_type == 2:
+            summary_envelope = value
+            break
+    if summary_envelope is None:
+        return None
+
+    encoded_summary = first_text_field(summary_envelope, 1)
+    if not encoded_summary:
+        return None
+    summary = decode_base64(encoded_summary)
+    if not summary:
+        return None
+
+    prompt = first_text_field(summary, 1)
+    title = title_from_prompt(prompt) if prompt else None
+    result = {"id": session_id, "source_path": db_path}
+    if title:
+        result["title"] = title
+    workspace = find_workspace_uri(summary)
+    if workspace:
+        result["cwd"] = workspace
+    return result
+
+
+try:
+    connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    row = connection.execute(
+        "select value from ItemTable where key = ?", (storage_key,)
+    ).fetchone()
+except sqlite3.Error as error:
+    diagnostic(f"could not read state database: {error}")
+    print("[]")
+    sys.exit(0)
+
+if not row or row[0] is None:
+    print("[]")
+    sys.exit(0)
+
+try:
+    encoded_trajectories = row[0]
+    if isinstance(encoded_trajectories, bytes):
+        encoded_trajectories = encoded_trajectories.decode("ascii")
+    trajectories = decode_base64(encoded_trajectories)
+    if not trajectories:
+        raise ValueError("trajectory summaries are not valid base64")
+except (UnicodeDecodeError, ValueError) as error:
+    diagnostic(f"could not decode trajectory summaries: {error}")
+    print("[]")
+    sys.exit(0)
+
+results = []
+seen = set()
+try:
+    records = list(fields(trajectories))
+except ValueError as error:
+    diagnostic(f"could not parse trajectory summaries: {error}")
+    print("[]")
+    sys.exit(0)
+
+for number, wire_type, record in records:
+    if number != 1 or wire_type != 2:
+        continue
+    try:
+        decoded = decode_record(record)
+    except ValueError as error:
+        diagnostic(f"skipping malformed trajectory: {error}")
+        continue
+    if decoded and decoded["id"] not in seen:
+        seen.add(decoded["id"])
+        results.append(decoded)
+
+print(json.dumps(results, ensure_ascii=False))
+PY
+}
+
+case "${1:-}" in
+  "$CALLBACK")
+    shift
+    case "${1:-}" in
+      discover|"") discover_sessions ;;
+      *) echo "unsupported agent-sessions action: $1" >&2; exit 64 ;;
+    esac
+    ;;
+  discover)
+    discover_sessions
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    echo "unknown command: $1" >&2
+    usage >&2
+    exit 64
+    ;;
+esac

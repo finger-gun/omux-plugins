@@ -48,6 +48,14 @@ version = "0.1.0"
 path = "plugins/agentsessions.omp/omux-plugin.toml"
 tags = ["agent-sessions", "omp", "jsonl"]
 
+[packages."agentsessions.antigravity"]
+kind = "plugin"
+name = "Antigravity Agent Sessions"
+description = "Indexes Antigravity trajectories from the local VS Code state store."
+version = "0.1.0"
+path = "plugins/agentsessions.antigravity/omux-plugin.toml"
+tags = ["agent-sessions", "antigravity", "agy", "vscode", "sqlite"]
+
 [packages."agenttools.webpage"]
 kind = "plugin"
 name = "Webpage Agent Tool"

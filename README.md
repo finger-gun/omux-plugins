@@ -90,6 +90,7 @@ Plugin entrypoints can be Bash, TypeScript, native binaries, or any other execut
 | `settings-ui` | `omux settings-ui` | Opens an extension-pane form for supported `config.toml` settings and saves through `omux config apply`. |
 | `agentsessions.opencode` | `omux agentsessions.opencode` | Adds OpenCode sessions to the Agent Sessions sidebar by reading OpenCode's local SQLite database. |
 | `agentsessions.kilocode` | `omux agentsessions.kilocode` | Adds KiloCode sessions to the Agent Sessions sidebar by reading KiloCode's local SQLite database. |
+| `agentsessions.antigravity` | `omux agentsessions.antigravity` | Adds Antigravity (`agy`) trajectories to the Agent Sessions sidebar from the local VS Code state store. |
 | `agenttools.webpage` | `omux agenttools.webpage` | Adds a webpage-reading agent tool that fetches a URL, extracts readable text, and returns a compact summary through `omux agent`. |
 
 OpenMUX also ships bundled plugins in the main app. They are not duplicated here when they are app-owned or when their command names are reserved by built-in `omux` commands.

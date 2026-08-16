@@ -8,9 +8,9 @@ This package adds the first custom agent tool plugin to the OpenMUX registry.
 
 - `agenttools.webpage.read-url`
 
-The tool accepts a single text input where the first non-empty line is a URL and any following lines are optional focus instructions. It fetches the page with `curl`, extracts readable text with Python stdlib HTML parsing, and keeps the extracted chunks in document order.
+The tool accepts a single text input where the first non-empty line is a URL and any following lines are optional focus instructions. It fetches the page with `curl`, extracts readable text with Python stdlib HTML parsing, and keeps the extracted chunks in document order before summarizing them.
 
-By default it returns focused extracted content directly. That is also what happens when `omux agent` calls it as a tool, so the active agent can summarize the returned content without spawning another agent. Direct CLI usage can opt into the bounded multi-pass nested `omux agent -p` summarization flow with `--summarize`.
+By default it runs a bounded multi-pass nested `omux agent -p` summarization flow: each chunk is reviewed in a fresh small context, chunk passes run in parallel, and a final synthesis pass returns a compact page summary focused on the user request. Child agent calls run with `--enabled-tools none` so they do not invoke unrelated tools while processing chunks. Direct CLI usage can opt out with `--raw` or `--no-summarize` to inspect extracted content without nested agent calls.
 
 ## Manifest
 
@@ -68,10 +68,10 @@ The plugin also works as a normal CLI command for local testing:
 ```sh
 omux agenttools.webpage https://openmux.fingergun.dev
 omux agenttools.webpage https://openmux.fingergun.dev "Focus on release changes"
-omux agenttools.webpage --summarize https://openmux.fingergun.dev "Focus on release changes"
+omux agenttools.webpage --raw https://openmux.fingergun.dev "Focus on release changes"
 ```
 
-The optional extra arguments are joined into one focus string and passed through as guidance for the parent agent or the `--summarize` model prompts. The plugin does not deterministically rank or reorder extracted chunks.
+The optional extra arguments are joined into one focus string and passed into the chunk-review and final-synthesis prompts. The plugin does not deterministically rank or reorder extracted chunks; relevance decisions come from the nested agent passes.
 
 ## Development
 
@@ -81,7 +81,11 @@ Direct CLI smoke test:
 plugins/agenttools.webpage/plugin https://openmux.fingergun.dev
 ```
 
-Default CLI mode and callback mode intentionally do not spawn another `omux agent -p`; nested local model calls can stall while the parent interactive agent is waiting for a tool result.
+Use `--raw` for a faster extraction-only smoke test:
+
+```sh
+plugins/agenttools.webpage/plugin --raw https://openmux.fingergun.dev
+```
 
 Direct callback smoke test:
 

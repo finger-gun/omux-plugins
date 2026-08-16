@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from html.parser import HTMLParser
 from typing import List, Optional, Tuple
 from urllib.parse import urlparse
@@ -209,30 +210,10 @@ def extract_readable_content(source_url: str, html_text: str) -> Tuple[str, str]
 
 
 def build_semantic_chunks(cleaned_text: str) -> List[str]:
-    sections: List[List[str]] = []
-    current: List[str] = []
-    for line in cleaned_text.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            if current:
-                sections.append(current)
-                current = []
-            continue
-        if current and (stripped.endswith(":") or stripped.startswith("#") or len(stripped.split()) <= 6):
-            sections.append(current)
-            current = [stripped]
-            continue
-        current.append(stripped)
-    if current:
-        sections.append(current)
-
-    candidate_chunks: List[str] = []
-    for section in sections:
-        candidate_chunks.extend(split_lines_by_utf8_budget(section, MAX_CHUNK_BYTES))
-
-    if candidate_chunks:
-        return candidate_chunks
-    return split_text_to_budget(cleaned_text, MAX_CHUNK_BYTES)
+    blocks = [block.strip() for block in re.split(r"\n{2,}", cleaned_text) if block.strip()]
+    if not blocks:
+        return split_text_to_budget(cleaned_text, MAX_CHUNK_BYTES)
+    return split_lines_by_utf8_budget(blocks, MAX_CHUNK_BYTES)
 
 
 def build_nested_prompt(url: str, title: str, focus: Optional[str], cleaned_text: str) -> str:
@@ -294,7 +275,7 @@ def build_final_prompt(url: str, title: str, focus: Optional[str], chunk_summari
 def run_nested_agent(prompt: str) -> str:
     omux_cli = os.environ.get("OMUX_CLI", "omux")
     result = subprocess.run(
-        [omux_cli, "agent", "-p", prompt],
+        [omux_cli, "agent", "--enabled-tools", "none", "-p", prompt],
         capture_output=True,
         text=True,
         check=False,
@@ -350,10 +331,12 @@ def summarize_url_input(input_text: str) -> str:
         if len(chunks) <= 1:
             prompt = build_nested_prompt(url, title, focus, cleaned_text)
             return run_nested_agent(prompt)
-        chunk_summaries = [
-            run_nested_agent(build_chunk_prompt(url, title, focus, index + 1, chunk))
+        prompts = [
+            build_chunk_prompt(url, title, focus, index + 1, chunk)
             for index, chunk in enumerate(chunks)
         ]
+        with ThreadPoolExecutor(max_workers=len(prompts)) as executor:
+            chunk_summaries = list(executor.map(run_nested_agent, prompts))
         return run_nested_agent(build_final_prompt(url, title, focus, chunk_summaries))
     except RuntimeError as exc:
         return fallback_output(url, title, focus, cleaned_text, str(exc))
@@ -363,7 +346,7 @@ def callback_mode() -> int:
     request = json.load(sys.stdin)
     input_text = request.get("input", "")
     try:
-        output = fetch_extract_url_input(input_text)
+        output = summarize_url_input(input_text)
         json.dump({"ok": True, "output": output}, sys.stdout)
         sys.stdout.write("\n")
         return 0
@@ -377,9 +360,14 @@ def cli_mode(argv: List[str]) -> int:
     if not argv:
         print("agenttools.webpage: missing URL", file=sys.stderr)
         return 1
-    summarize = False
+    summarize = True
     if argv[0] == "--summarize":
-        summarize = True
+        argv = argv[1:]
+        if not argv:
+            print("agenttools.webpage: missing URL", file=sys.stderr)
+            return 1
+    elif argv[0] in {"--raw", "--no-summarize"}:
+        summarize = False
         argv = argv[1:]
         if not argv:
             print("agenttools.webpage: missing URL", file=sys.stderr)
